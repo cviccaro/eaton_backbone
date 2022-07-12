@@ -1,0 +1,3292 @@
+<?php
+/**
+ * Setup
+ */
+define('EATON_RECEIPT_ID_SALT', 'MsxpEbua2uVZom95WhV5'); // This salt gets used to encode receipt identifiers
+define('EATON_EMAIL_ID_SALT', 'hBBv7PR9mAxqoPjvs6Tu'); // This salt gets used to encode email identifiers
+
+module_load_include('inc', 'eaton_backbone', 'eaton_backbone.theme');
+module_load_include('inc', 'eaton_backbone', 'eaton_backbone.pages');
+module_load_include('php', 'eaton_backbone', 'inc/lib/html2pdf/html2pdf.class'); // Load html2pdf class
+module_load_include('inc', 'eaton_backbone', 'inc/lib/fpdf/RotateableMemImageFpdf.class'); // Load specialized FPDF class
+module_load_include('inc', 'eaton_backbone', 'inc/QrCodeSticker.class'); // Load QR code sticker class
+module_load_include('inc', 'eaton_backbone', 'inc/BarcodeGraphicsStickerSheet.class'); // Load barcode class
+module_load_include('inc', 'eaton_backbone', 'inc/eloqua.functions');
+
+/**
+ * Implements hook_init().
+ */
+function eaton_backbone_init() {
+	// Add CORS header, and add
+	//drupal_add_http_header('Access-Control-Allow-Origin', '*');
+	drupal_add_http_header('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+	//drupal_add_http_header('Access-Control-Allow-Headers',$_REQUEST['Access-Control-Allow-Headers'])
+	$headers = getallheaders();
+
+	if (isset($headers['Access-Control-Request-Headers'])) {
+		drupal_add_http_header('Access-Control-Allow-Headers', $headers['Access-Control-Request-Headers']);
+	}
+	$field = field_info_field('field_event_location');
+	if ($field && $field['settings']['allowed_values_function'] == '') {
+		$field['settings']['allowed_values'] = array();
+		$field['settings']['allowed_values_function'] = 'eaton_backbone_eaton_locations_options';
+		field_update_field($field);
+	}
+	$field = field_info_field('field_eaton_location');
+	if ($field && $field['settings']['allowed_values_function'] == '') {
+		$field['settings']['allowed_values'] = array();
+		$field['settings']['allowed_values_function'] = 'eaton_backbone_eaton_locations_options';
+		field_update_field($field);
+	}
+}
+
+/**
+ * Implements hook_menu().
+ */
+function eaton_backbone_menu() {
+	// Event Requests
+	$items['requests'] = array(
+		'title callback' => 'eaton_backbone_event_requests_page_title',
+		'description' => 'Lists all event requests and allows approval',
+		'page callback' => 'eaton_backbone_event_requests_page',
+		'access arguments' => array('access events request page'),
+		'weight' => 0,
+		'type' => MENU_NORMAL_ITEM,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Event Request Receipt
+	$items['receipt/%'] = array(
+		'title callback' => 'eaton_backbone_event_request_receipt_page_title',
+		'title arguments' => array(1),
+		'description' => 'Thank you/confirmation page for new Event Requests',
+		'page callback' => 'eaton_backbone_event_request_receipt_page',
+		'page arguments' => array(1),
+		'access callback' => 'eaton_backbone_event_request_receipt_page_access',
+		'access arguments' => array(1),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Registration Thanks
+	$items['thanks/%'] = array(
+		'title callback' => 'eaton_backbone_public_registration_thanks_page_title',
+		'title arguments' => array(1),
+		'description' => 'Thank you/confirmation page for registration by the public',
+		'page callback' => 'eaton_backbone_public_registration_thanks_page',
+		'page arguments' => array(1),
+		'access callback' => true,
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Registration Email
+	$items['email/%'] = array(
+		'title' => 'View Email Online',
+		'title arguments' => array(1),
+		'description' => 'View Event Approval email online',
+		'page callback' => 'eaton_backbone_email_page',
+		'page arguments' => array(1),
+		'access callback' => true,
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	//Preregistration Page
+	$items['event/%node'] = array(
+		'title callback' => 'eaton_backbone_approved_event_preregistration_page_title',
+		'title arguments' => array(1),
+		'description' => 'Approved Event Preregistration',
+		'page callback' => 'eaton_backbone_approved_event_preregistration_page',
+		'page arguments' => array(1),
+		'access callback' => 'eaton_backbone_approved_event_preregistration_access',
+		'access arguments' => array(1),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// aprove ajax
+	$items['event_ajax/%node/%'] = array(
+		'title' => 'Approve event request',
+		'description' => 'Approve Event Request',
+		'page callback' => 'eaton_backbone_ajax_edit_event_request',
+		'page arguments' => array(1, 2),
+		'access callback' => 'eaton_backbone_ajax_edit_event_request_access',
+		'access arguments' => array(1, 2),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	$items['event/%node/edit'] = array(
+		'title' => 'Edit',
+		'page callback' => '_eaton_backbone_redirect_to_node_edit',
+		'page arguments' => array(1),
+		'access callback' => 'node_access',
+		'access arguments' => array('update', 1),
+		'weight' => 0,
+		'type' => MENU_LOCAL_TASK,
+		'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+		'file' => 'node.pages.inc',
+		'file path' => drupal_get_path('module', 'node'),
+	);
+	$items['event/%node/accept_suggested_date'] = array(
+		'title callback' => 'eaton_backbone_accept_suggested_date_title',
+		'title arguments' => array(1),
+		'description' => 'Accept Suggested Date Page',
+		'page callback' => 'eaton_backbone_accept_suggested_date_page',
+		'page arguments' => array(1),
+		'access callback' => 'eaton_backbone_accept_suggested_date_access',
+		'access arguments' => array(1),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Public registration page for any public event
+	$items['register/%node'] = array(
+		'title callback' => 'eaton_backbone_public_event_registration_page_title',
+		'title arguments' => array(1),
+		'description' => 'Public Registration page for Event',
+		'page callback' => 'eaton_backbone_public_event_registration_page',
+		'page arguments' => array(1),
+		'access callback' => true,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Deliver csv file with template for attendees table
+	$items['templates/attendees.csv'] = array(
+		'page callback' => 'eaton_backbone_csv_template_page',
+		'access callback' => 'user_is_logged_in',
+		'type' => MENU_NORMAL_ITEM,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Deliver XLSX file with template for attendees table
+	$items['templates/attendees.xlsx'] = array(
+		'page callback' => 'eaton_backbone_xlsx_template_page',
+		'access callback' => 'user_is_logged_in',
+		'type' => MENU_NORMAL_ITEM,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Deliver ICS file from node's approved date
+	$items['ics/%node'] = array(
+		'page callback' => 'eaton_backbone_ics_page',
+		'page arguments' => array(1),
+		'access callback' => true,
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Deliver one attendee badge on a node
+	$items['badge/%node/%'] = array(
+		'page callback' => 'eaton_backbone_deliver_badge',
+		'page arguments' => array(1, 2),
+		'access callback' => 'eaton_backbone_deliver_badge_access',
+		'access arguments' => array(1, 2),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	$items['badge/%node/%/back'] = array(
+		'page callback' => 'eaton_backbone_deliver_badge',
+		'page arguments' => array(1, 2, true, 'back'),
+		'access callback' => 'eaton_backbone_deliver_badge_access',
+		'access arguments' => array(1, 2),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Deliver all badges on a node
+	$items['badges/%node'] = array(
+		'page callback' => 'eaton_backbone_deliver_event_badges',
+		'page arguments' => array(1),
+		'access callback' => 'eaton_backbone_deliver_event_badges_access',
+		'access arguments' => array(1),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Deliver all badges on a node (rear)
+	$items['badges/%node/back'] = array(
+		'page callback' => 'eaton_backbone_deliver_event_badges',
+		'page arguments' => array(1, true, false, 'back'),
+		'access callback' => 'eaton_backbone_deliver_event_badges_access',
+		'access arguments' => array(1, 'back'),
+		'type' => MENU_CALLBACK,
+		'file' => 'eaton_backbone.pages.inc',
+	);
+
+	// My registrations
+	$items['my-registrations'] = array(
+		'page callback' => 'eaton_backbone_my_registrations_page',
+		'title' => 'My Registrations',
+		'description' => t('Show authenticated users\' registrations, tied to attendeeresource'),
+		'access arguments' => array('access my registrations page'),
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	// Today's events & attendees
+	$items['today'] = array(
+		'page callback' => 'eaton_backbone_today_page',
+		'title' => 'Today\'s Events and Attendees',
+		'description' => t('Display a listing of events and attendees happening today.'),
+		'access arguments' => array('access today page'),
+		'file' => 'eaton_backbone.pages.inc',
+	);
+
+	// Eaton menu
+	$items['admin/config/eaton'] = array(
+		'title' => t('Eaton'),
+		'description' => t('Eaton configuration'),
+		'page callback' => 'system_admin_menu_block_page',
+		'access arguments' => array('administer site configuration'),
+		'file' => 'system.admin.inc',
+		'file path' => drupal_get_path('module', 'system'),
+		'position' => 'left',
+		'type' => MENU_CALLBACK,
+	);
+
+	// Email templates
+	$items['admin/config/eaton/email_templates'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_backbone_email_templates_admin_form'),
+		'title' => t('Email Templates'),
+		'description' => t('Edit the email templates'),
+		'access arguments' => array('administer eaton email templates'),
+		'file' => 'eaton_backbone.admin.inc',
+	);
+
+	// CSv Template Help
+	$items['eaton_backbone/help/csv_template'] = array(
+		'page callback' => 'eaton_backbone_csv_template_help',
+		'title' => 'CSV Template Help',
+		'description' => 'Show possible values for various columns',
+		'access arguments' => array('access content'),
+		'file' => 'eaton_backbone.pages.inc',
+	);
+	$items['eaton_backbone/help/xls_template'] = array(
+		'page callback' => 'eaton_backbone_xls_template_help',
+		'title' => 'Excel Template Help',
+		'description' => 'Show possible values for various columns',
+		'access arguments' => array('access content'),
+		'file' => 'eaton_backbone.pages.inc',
+	);
+
+	$items['eaton_backbone/attendee_form/options'] = array(
+		'page callback' => 'eaton_backbone_attendee_form_options_json',
+		'title' => 'Attendee Form Options over JSON',
+		'access arguments' => array('access content'),
+		'file' => 'eaton_backbone.pages.inc',
+	);
+
+	// Eloqua
+	$items['admin/config/eaton/eloqua'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_eloqua_config_form'),
+		'title' => t('Configure Eloqua'),
+		'description' => t('Set form ID, client ID, secret, username, and password for the Eaton-Eloqua connector.'),
+		'access arguments' => array('administer eaton eloqua connector'),
+		'file' => 'eloqua.functions.inc',
+		'file path' => drupal_get_path('module', 'eaton_backbone') . '/inc',
+	);
+
+	// General configuration
+	// $items['admin/config/eaton/settings'] = array(
+	//     'page callback' => 'drupal_get_form',
+	//     'page arguments' => array('eaton_backbone_admin_settings_form'),
+	//     'title' => t('Configuration'),
+	//     'description' => t('Configure Eaton Backbone'),
+	//     'access arguments' => array('administer site configuration'),
+	//     'file' => 'eaton_backbone.admin.inc',
+	// );
+
+	// Eaton Locations
+	$items['admin/config/eaton/locations'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_backbone_admin_eaton_locations'),
+		'title' => 'Locations',
+		'description' => t('Add, edit, or remove Eaton Locations'),
+		'access arguments' => array('administer eaton locations'),
+		'file' => 'eaton_backbone.admin.inc',
+		'weight' => 0,
+	);
+	$items['admin/config/eaton/locations/locations'] = array(
+		'title' => 'Locations',
+		'type' => MENU_DEFAULT_LOCAL_TASK,
+	);
+	$items['admin/config/eaton/locations/add'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_backbone_admin_eaton_locations_form'),
+		'title' => 'Add new location',
+		'description' => t('Add new location'),
+		'access arguments' => array('administer eaton locations'),
+		'file' => 'eaton_backbone.admin.inc',
+		'type' => MENU_LOCAL_TASK,
+	);
+	$items['admin/config/eaton/locations/edit/%'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_backbone_admin_eaton_locations_form', 5),
+		'title' => 'Edit Eaton Location',
+		'description' => t('Add new location'),
+		'access arguments' => array('administer eaton locations'),
+		'file' => 'eaton_backbone.admin.inc',
+	);
+	$items['admin/config/eaton/locations/delete/%'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_backbone_admin_eaton_locations_form_delete', 5),
+		'title' => 'Delete Eaton Location',
+		'description' => t('Delete location'),
+		'access arguments' => array('administer eaton locations'),
+		'file' => 'eaton_backbone.admin.inc',
+	);
+	$items['admin/config/eaton/locations/settings'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_backbone_admin_eaton_locations_settings'),
+		'title' => 'Settings',
+		'description' => t('Configure default location settings.'),
+		'access arguments' => array('administer eaton locations'),
+		'file' => 'eaton_backbone.admin.inc',
+		'type' => MENU_LOCAL_TASK,
+	);
+	// Location badging
+	$items['admin/config/eaton/locations/badging'] = array(
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('eaton_backbone_admin_eaton_locations_badging_form'),
+		'title' => 'Badging',
+		'description' => t('Edit the default badging settings and manage templates for each location.'),
+		'access arguments' => array('administer eaton locations badging'),
+		'file' => 'eaton_backbone.admin.inc',
+		'type' => MENU_LOCAL_TASK,
+	);
+	return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function eaton_backbone_permission() {
+	return array(
+		'administer eaton locations' => array(
+			'title' => t('Administer Eaton Locations'),
+			'description' => t('Add, remove, and edit Eaton Locations'),
+		),
+		'access events request page' => array(
+			'title' => t('Access Eaton Events Request Page'),
+			'description' => t('Grant access to eaton events request page'),
+		),
+		'access my registrations page' => array(
+			'title' => t('Access My Registrations Page'),
+			'description' => t('Grant access to My Registrations page'),
+		),
+		'access today page' => array(
+			'title' => t('Access Today Page'),
+			'description' => t('Grant access to the Today\'s Events and Attendees page'),
+		),
+		'administer eaton email templates' => array(
+			'title' => t('Edit Eaton Email Templates'),
+			'description' => 'Change default text in approval and denied emails.',
+		),
+		'administer eaton locations badging' => array(
+			'title' => t('Edit Badges'),
+			'description' => t('Configure badging defaults including front of badge and back of badge.'),
+		),
+		'administer eaton eloqua connector' => array(
+			'title' => 'Administer Eaton-Eloqua connector',
+			'description' => 'Set form ID, client ID, secret, username, and password for the Eaton-Eloqua connector.',
+		),
+	);
+}
+
+/**
+ * Implements hook_theme().
+ *
+ * [Templates stored in templates/ folder]
+ *
+ * What you'll find here:
+ *
+ * Underscore.JS templates
+ * eaton_backbone_event_request_coordinator_node_template: Template for instance of event request node (for coordinators)
+ * eaton_backbone_event_request_initiator_node_template: Template for instance of event request node (for initiators)
+ * eaton_backbone_event_request_coordinator_app_template: App template for Event Requests, contains previous node template (for coordinators) (template file)
+ * eaton_backbone_event_request_initiator_app_template: App template for Event Requests, contains previous node template (for initators) (template file)
+ * eaton_backbone_event_attendees_app_template: App template for Event Attendees (shown on event's individual page) (template file)
+ * eaton_backbone_event_attendees_attendee_template: Template for instance of Event Attendee (shown on event's individual page)
+ *
+ * Other themes
+ * eaton_backbone_event_request_receipt: Theme for Event Request Receipt (template file)
+ * eaton_backbone_event_details: Theme returning Event Request details
+ * eaton_backbone_attendee_details: Theme returning Attendee details
+ * eaton_backbone_approved_email: Theme returning HTML email for event approval
+ * eaton_backbone_registration_email: Theme returning HTML email for attendee registration
+ * eaton_backbone_public_registration_thanks: Theme for public registration thank-you page
+ * eaton_backbone_ics: Theme returning an event in ICS format (template file)
+ * eaton_backbone_event_attendees: Theme returning event attendees for an event
+ * eaton_backbone_my_registrations: Theme returning attendee's registrations
+ */
+function eaton_backbone_theme($existing, $type, $theme, $path) {
+	return array(
+		'eaton_backbone_event_request_coordinator_node_template' => array(
+			'variables' => array(),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_request_initiator_node_template' => array(
+			'variables' => array(),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_request_coordinator_app_template' => array(
+			'template' => 'templates/eaton-backbone-event-request-coordinator-app-template',
+			'variables' => array(),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_request_initiator_app_template' => array(
+			'template' => 'templates/eaton-backbone-event-request-initiator-app-template',
+			'variables' => array(),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_request_receipt' => array(
+			'template' => 'templates/eaton-backbone-event-request-receipt',
+			'variables' => array(),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_attendees_app_template' => array(
+			'template' => 'templates/eaton-backbone-event-attendees-app-template',
+			'variables' => array('nid' => null),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_attendees_attendee_template' => array(
+			'variables' => array(),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_details' => array(
+			'render element' => 'node',
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_details_invite' => array(
+			'render element' => 'node',
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_attendee_details' => array(
+			'variables' => array(
+				'attendee_id' => '',
+				'attendee' => null,
+				'title' => 'Your Information',
+				'extra' => '',
+				'class' => array(),
+			),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_request_email' => array(
+			'render element' => 'node',
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_approved_email' => array(
+			'render element' => 'node',
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_denied_email' => array(
+			'render element' => 'node',
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_event_email' => [
+			'render element' => 'node',
+			'file' => 'eaton_backbone.theme.inc',
+		],
+		'eaton_backbone_suggested_date_accepted_email' => array(
+			'render element' => 'node',
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_registration_email' => array(
+			'variables' => array(
+				'attendee' => '',
+				'node' => '',
+				'receipt_id' => '',
+				'message' => '',
+			),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_public_registration_thanks' => array(
+			'variables' => array(
+				'event_id' => '',
+				'attendee_id' => '',
+			),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_ics' => array(
+			'template' => 'templates/eaton-backbone-ics',
+			'variables' => array(
+				'event_id' => '',
+				'filename' => '',
+				'datestart' => '',
+				'dateend' => '',
+				'location' => '',
+				'description' => '',
+				'summary' => '',
+				'tzid' => '',
+			),
+		),
+		'eaton_backbone_event_attendees' => array(
+			'variables' => array(
+				'node' => '',
+			),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_my_registrations' => array(
+			'variables' => array('attendee' => null),
+			'file' => 'eaton_backbone.theme.inc',
+		),
+		'eaton_backbone_badge' => array(
+			'variables' => array(
+				'attendee' => '',
+				'node' => '',
+				'file' => '',
+				'image_height' => 184,
+				'image_width' => 184,
+				'wrapper_attributes' => array(
+					'class' => array('badge'),
+				),
+                'background' => '',
+				//'background' => 'http://' . $_SERVER['HTTP_HOST'] . '/' . drupal_get_path('theme', 'eaton') . '/img/Eaton_Badge_BG_300dpi.jpg',
+				//'top_image' => 'http://' . $_SERVER['HTTP_HOST'] . '/' . drupal_get_path('theme','eaton') . '/img/Eaton_Badge_Top.jpg',
+			),
+			'template' => 'templates/eaton-backbone-badge',
+		),
+		'eaton_backbone_badge_large_qr' => array(
+			'variables' => array(
+				'attendee' => '',
+				'node' => '',
+				'file' => '',
+				'image_height' => 184,
+				'image_width' => 184,
+				'wrapper_attributes' => array(
+					'class' => array('badge'),
+				),
+				'background' => '',
+			),
+			'template' => 'templates/eaton-backbone-badge-large-qr',
+		),
+		'eaton_backbone_badge_back' => array(
+			'variables' => array(
+				'node' => '',
+				'wrapper_attributes' => array(
+					'class' => array('badge', 'back'),
+				),
+				'background' => '',
+			),
+			'template' => 'templates/eaton-backbone-badge-back',
+		),
+	);
+}
+
+/**
+ * Implements hook_webform_select_options_info().
+ */
+function eaton_backbone_webform_select_options_info() {
+	$items = array();
+	$items['eaton_locations'] = array(
+		'title' => 'Eaton Office Locations',
+		'options callback' => '_eaton_backbone_options_office_locations',
+	);
+	$items['eaton_locations_emails'] = array(
+		'title' => 'Eaton Office Locations Emails',
+		'options callback' => '_eaton_backbone_options_office_locations_emails',
+	);
+	return $items;
+}
+
+/**
+ * Return Eaton locations
+ */
+function _eaton_backbone_options_office_locations($add_empty = false) {
+	$locations = eaton_backbone_eaton_locations();
+	$options = array();
+	foreach ($locations as $location) {
+		$options[$location->location_code] = $location->location_name;
+	}
+	if ($add_empty) {
+		$o = $options;
+		$options = array(-1 => '-- Select One --');
+		$options += $o;
+	}
+	return $options;
+}
+
+function _eaton_backbone_options_office_locations_emails($add_empty = false) {
+	$locations = eaton_backbone_eaton_locations();
+	$options = array();
+	foreach ($locations as $location) {
+		$options[$location->location_email] = $location->location_name;
+	}
+	return $options;
+}
+
+/**
+ * Returns an associative array of all eaton locations
+ */
+function eaton_backbone_eaton_locations() {
+	return db_select('eaton_backbone_eaton_locations', 'l')->fields('l')->execute()->fetchAllAssoc('location_id');
+}
+
+/**
+ *  Return Eaton Location by Event Node
+ **/
+function eaton_backbone_eaton_location_by_event($node) {
+	$wrapper = entity_metadata_wrapper('node', $node);
+	$location_code = $wrapper->field_event_location->value();
+	return eaton_backbone_eaton_location_by_code($location_code);
+}
+
+/**
+ * Return Eaton Location by Location Code
+ **/
+function eaton_backbone_eaton_location_by_code($location_code) {
+	return db_select('eaton_backbone_eaton_locations', 'l')->fields('l')->condition('location_code', $location_code)->execute()->fetchObject();
+}
+
+/**
+ * Return Eaton Location by ID
+ **/
+function eaton_backbone_eaton_location_by_id($location_id) {
+	return db_select('eaton_backbone_eaton_locations', 'l')->fields('l')->condition('location_id', $location_id)->execute()->fetchObject();
+}
+
+function eaton_backbone_eaton_location_address($location_code, $html = true) {
+	$newline = $html ? '<br />' : '\n';
+	$location = eaton_backbone_eaton_location_by_code($location_code);
+	$output = '';
+	$city = false;
+	if (!empty($location->address)) {
+		$output = $location->address;
+	}
+	if (!empty($location->city)) {
+		$output .= $newline . $location->city;
+		$city = true;
+	}
+	if (!empty($location->state)) {
+		if ($city) {
+			$output .= ', ';
+		}
+		$output .= $location->state;
+	}
+	if (!empty($location->postal)) {
+		$output .= ' ' . $location->postal;
+	}
+
+	if (!empty($location->country) && !in_array(strtolower($location->country), array('usa', 'us', 'united states', 'united states of america', 'america'))) {
+		$output .= $newline . $location->country;
+	}
+
+	return $output;
+}
+
+/**
+ * Returns a flat array of eaton locations that are enabled for events
+ */
+function eaton_backbone_eaton_locations_options() {
+	$result = db_select('eaton_backbone_eaton_locations', 'l')->fields('l', array('location_code', 'location_name', 'location_available_for_events'))->execute()->fetchAllAssoc('location_code');
+	$options = array();
+	foreach ($result as $row) {
+		if ($row->location_available_for_events) {
+			$options[$row->location_code] = $row->location_name;
+		}
+	}
+	return $options;
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function eaton_backbone_views_api() {
+	return array(
+		'api' => 3,
+	);
+}
+
+/**
+ * Implements hook_views_pre_build().
+ */
+function eaton_backbone_views_pre_build(&$view) {
+	global $user;
+	if ($view->name == 'public_events') {
+		if (!_eaton_backbone_is_coordinator($user)) {
+			// change filter to public only
+			$view->filter['field_event_visibility_value']->value = array('public' => 'public');
+		}
+		// add js to add arrows to views sorting
+		drupal_add_js(drupal_get_path('module', 'eaton_backbone') . '/js/views_table.js');
+	}
+}
+
+/**
+ * Implementation of hook_views_query_alter().
+ */
+function eaton_backbone_views_query_alter(&$view, &$query) {
+	if ($view->name == 'public_events') {
+		$query->orderby[0]['direction'] = 'DESC';
+	}
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function eaton_backbone_form_alter(&$form, &$form_state, $form_id) {
+	global $user;
+	switch ($form_id) {
+	case 'event_request_node_form':
+		$is_coordinator = _eaton_backbone_is_coordinator($user);
+		// For the event request node form, we want to load JS and settings and configure the form
+		$node = $form['#node'];
+		$u = user_load($node->uid);
+		// Add App JS and settings if coordinator
+		if (isset($node->nid) && $is_coordinator) {
+			drupal_add_js(array('eaton_node_edit' => array('node' => $node, 'username' => $u->name)), 'setting');
+			drupal_add_js(drupal_get_path('module', 'eaton_backbone') . '/js/node_edit.js');
+		}
+		// Set event location if available from user profile
+		if (isset($u->field_eaton_location) && !empty($u->field_eaton_location)) {
+			$form['field_event_location'][LANGUAGE_NONE]['#default_value'] = $u->field_eaton_location[LANGUAGE_NONE][0]['value'];
+		}
+		// add room requirements validator
+		$form['field_room_requirements'][LANGUAGE_NONE]['#element_validate'][] = 'eaton_backbone_room_requirements_option_field_validate';
+		// add possible date validator
+		foreach ($form['field_possible_dates'][LANGUAGE_NONE] as $key => &$field) {
+			if (substr($key, 0, 1) != '#') {
+				$field['#element_validate'][] = 'eaton_backbone_possible_dates_field_validate';
+			}
+		}
+		// add possible date description (timezone)
+		$location_timezone = 'UTC';
+		$timezone_description = '';
+		if (isset($u->field_eaton_location) && !empty($u->field_eaton_location)) {
+			$location_timezone = eaton_backbone_timezone_for_location($u->field_eaton_location[LANGUAGE_NONE][0]['value']);
+			$timezone_system_description = eaton_backbone_timezone_system_description($location_timezone);
+			$timezone_description = t('The currently selected location is using the <span id="timezone_display">!timezone</span> timezone.  All dates and times entered will be in this timezone.', array('!timezone' => $timezone_system_description));
+
+			$existing_prefix = $form['field_possible_dates'][LANGUAGE_NONE]['#prefix'];
+			$form['field_possible_dates'][LANGUAGE_NONE]['#prefix'] = $existing_prefix . '<div class="description" style="margin-bottom:2.5em; margin-top: -1.5em">' . $timezone_description . '</div>';
+
+			$form['#after_build'][] = 'eaton_backbone_add_timezone_support';
+		}
+		// $form['field_possible_dates'][LANGUAGE_NONE][0]['#datepicker_options'] = array('minDate' => time());
+		// dpm($form);
+		// Add after build to add more generic JS
+		$form['#after_build'][] = 'eaton_backbone_event_request_node_form_after_build';
+		break;
+	case 'user_register_form':
+	case 'user_profile_form':
+		// Add location options and a validation handler
+		$form['field_eaton_location'][LANGUAGE_NONE]['#options'] = _eaton_backbone_options_office_locations(true);
+		$form['field_eaton_location'][LANGUAGE_NONE]['#element_validate'][] = 'eaton_backbone_eaton_location_validate';
+		if ($form_id == 'user_profile_form') {
+			// add current value
+			$u = $form['#user'];
+			if (!empty($u->field_eaton_location)) {
+				$form['field_eaton_location'][LANGUAGE_NONE]['#default_value'] = $u->field_eaton_location[LANGUAGE_NONE][0]['value'];
+			}
+		}
+		break;
+	case 'eaton_backbone_event_registrant_form':
+		if (strpos(current_path(), 'register/') !== false) {
+			// public registration page
+			$form['#after_build'] = array('eaton_backbone_public_event_registrant_form_after_build');
+		}
+		break;
+	}
+}
+
+/**
+ * Validation function for field_eaton_location (on user profile)
+ */
+function eaton_backbone_eaton_location_validate($element, &$form_state) {
+	if (isset($form_state['submit_handlers']) && in_array('user_edit_cancel_submit', $form_state['submit_handlers'])) {
+		// don't act when an account is being cancelled...
+		return;
+	}
+	if ($element['#value'] == -1) {
+		form_error($element, t('You must select an Eaton Location.'));
+	}
+}
+
+/**
+ * Validation function for field_room_requirements (on node type event request)
+ */
+function eaton_backbone_room_requirements_option_field_validate($element, &$form_state) {
+	if (empty($element['#value'])) {
+		form_set_error($element['#name'], t('You must select at least one room requirement'));
+	}
+}
+
+/**
+ * Validation function for field_possible_dates (on node type event request)
+ */
+function eaton_backbone_possible_dates_field_validate($element, &$form_state) {
+	$date1_value = $element['value']['#value'];
+
+	$delta = $element['#delta'];
+	$values = $form_state['values']['field_possible_dates'][LANGUAGE_NONE][$delta];
+	$all_day = isset($values['all_day']) && $values['all_day'] != 0;
+	$has_end = isset($values['show_todate']) && $values['show_todate'] != 0;
+	switch ($delta) {
+	case 0:
+		$delta = 'first';
+		break;
+	case 1:
+		$delta = 'second';
+		break;
+	case 2:
+		$delta = 'third';
+		break;
+	}
+	// if (empty($date1_value['date'])) {
+	//   form_error($element, t('You must choose 3 possible dates.  The @which one was left blank.',array('@which' => $delta)));
+	// }
+	if (!empty($date1_value['date'])) {
+		if (!$all_day && empty($date1_value['time'])) {
+			form_error($element, t('The start time for the @which possible date field is required.', array('@which' => $delta)));
+		}
+		if ($has_end) {
+			$date2_value = $element['value2']['#value'];
+			if (empty($date2_value['date'])) {
+				form_error($element, t('The end date for the @which possible date field is required.', array('@which' => $delta)));
+			}
+			if (!$all_day && empty($date2_value['time'])) {
+				form_error($element, t('The end time for the @which possible date field is required.', array('@which' => $delta)));
+			}
+		}
+	} else {
+		if ($delta == 'first') {
+			// only error on first one being empty
+			form_error($element, t('You must at least choose 1 possible date and time.'));
+		}
+	}
+}
+
+/**
+ * Implements hook_node_presave().
+ *
+ * Clear denied on date, denied suggested date, and message if event request is approved
+ */
+function eaton_backbone_node_presave($node) {
+	if ($node->type == 'event_request') {
+		// watchdog('eaton_backbone_node_presave','Running: <pre>' . print_r($node, TRUE) . '</pre>',NULL,WATCHDOG_INFO);
+		if (isset($node->original)) {
+			$node->status = 1;
+			if ($node->field_request_status[LANGUAGE_NONE][0]['value'] == 'approved' && $node->original->field_request_status[LANGUAGE_NONE][0]['value'] != 'approved') {
+				variable_set('eaton_backbone_event_' . $node->nid . '_date_approved_on', time());
+				// clear denied on/suggested dates
+				//$node->field_denied_on_date = array();
+				//$node->field_denied_suggested_date = array();
+				//$node->field_denied_message = array();
+			}
+		} elseif ($node->field_request_status[LANGUAGE_NONE][0]['value'] == 'approved') {
+			variable_set('eaton_backbone_event_' . $node->nid . '_date_approved_on', time());
+		}
+	}
+}
+
+/**
+ * Implements hook_node_update().
+ *
+ * On event request update:
+ * 1) Dispatch event approval email on event approval
+ * 2) Feed users back to node edit page on save.
+ */
+function eaton_backbone_node_update($node) {
+	// get old values
+	$old_node = node_load($node->nid);
+	//watchdog('eaton_backbone_node_update','Running',NULL,WATCHDOG_INFO);
+	if ($node->type == 'event_request') {
+		$node_author = user_load($node->uid);
+		$access = _eaton_backbone_is_initiator($node_author) || _eaton_backbone_is_coordinator($node_author);
+		//watchdog('eaton_backbone_node_update', 'stuff: <pre>' . print_r(array('node' => $node, 'old_node' => $old_node, 'access' => $access),TRUE) . '</pre>',NULL,WATCHDOG_INFO);
+		// if (!_eaton_backbone_event_is_approved($old_node) && _eaton_backbone_event_is_approved($node) && $access) {
+		// 	// remove from accepted suggested table if it exists
+		// 	//db_delete('eaton_backbone_accepted_suggestions','a')->condition('event_id', $node->nid)->execute();
+		// 	// dispatch email
+		// 	_eaton_backbone_dispatch_approved_email($node);
+		// 	if (!empty($node->field_register_initiator) && $node->field_register_initiator[LANGUAGE_NONE][0]['value'] == 1) {
+		// 		_eaton_backbone_register_event_initiator_as_attendee($node);
+		// 	}
+		// } elseif (!_eaton_backbone_event_is_denied($old_node) && _eaton_backbone_event_is_denied($node) && $access) {
+		// 	// dispatch email
+		// 	_eaton_backbone_dispatch_denied_email($node);
+		// }
+		if (current_path() == 'node/' . $node->nid . '/edit') {
+			// go back to node edit page on regular saves, not REST server saves.
+			drupal_set_message('Event Request "' . $node->title . '" has been updated.');
+			drupal_goto('node/' . $node->nid . '/edit');
+		}
+	}
+}
+
+function _eaton_backbone_register_event_initiator_as_attendee($node) {
+	// Register initiator as first attendee.
+	$node_author = user_load($node->uid);
+	$attendee = _attendeeresource_lookup_attendee($node_author->mail);
+	if ($attendee === false) {
+		$new_attendee = new stdClass();
+		$new_attendee->email = $node_author->mail;
+		$new_attendee->first_name = $node_author->field_first_name[LANGUAGE_NONE][0]['value'];
+		$new_attendee->last_name = $node_author->field_last_name[LANGUAGE_NONE][0]['value'];
+		$new_attendee->company = '';
+		$new_attendee->title = '';
+		$new_attendee->state = 'PA';
+		$new_attendee->country = 'US';
+		$new_attendee->city = '';
+		$new_attendee->zip = '';
+		$new_attendee->picture = null;
+		$attendee_id = _attendeeresource_add_attendee($new_attendee);
+		$attendee = new stdClass();
+		$attendee->attendee_id = $attendee_id;
+	}
+	if (!_attendeeresource_attendee_id_exists_event($attendee->attendee_id, $node->nid)) {
+		_attendeeresource_add_attendee_to_event($attendee->attendee_id, $node->nid);
+		_eaton_backbone_dispatch_preregistration_email($attendee->attendee_id, $node->nid);
+	}
+}
+
+/**
+ * Implements hook_node_insert().
+ *
+ * On new event request creation:
+ * 1) Insert node id to node access (TODO: why do I have to do this?)
+ * 2) Generate receipt ID, then goto Receipt page
+ */
+function eaton_backbone_node_insert($node) {
+	if ($node->type == 'event_request') {
+		// insert to node access table...
+
+    $exists = db_select('node_access', 'na')->fields('na', array('nid'))->condition('nid', $node->nid)->countQuery()->execute()->fetchField();
+		if (!$exists) {
+			db_insert('node_access')->fields(array('nid' => $node->nid, 'gid' => 0, 'realm' => 'all', 'grant_view' => 1, 'grant_update' => 0, 'grant_delete' => 0))->execute();
+		}
+
+		$wrapper = entity_metadata_wrapper('node', $node);
+		$request_status = $wrapper->field_request_status->value();
+		if ($request_status == 'approved') {
+			// If request_status is preapproved, mark status property as 1
+			db_update('node')->fields(array('status' => 1))->condition('nid', $node->nid)->execute();
+			// and check if iniator needs registered by ensuring node_update gets called (by saving again)
+			if (!empty($node->field_register_initiator) && $node->field_register_initiator[LANGUAGE_NONE][0]['value'] == 1) {
+				_eaton_backbone_register_event_initiator_as_attendee($node);
+			}
+		}
+
+		_eaton_backbone_dispatch_event_email($node);
+
+		// direct user to an event request confirmation page
+		$receipt_id = _eaton_backbone_encrypt_receipt_id($node->nid);
+		drupal_goto("receipt/$receipt_id");
+	}
+}
+
+/**
+ * Approved Event Preregistration CSV Upload Form
+ *
+ * Form build
+ * Validate
+ * Submit
+ */
+function eaton_backbone_approved_event_preregistration_upload_form($form, &$form_state, $node) {
+	$form['title'] = array(
+		'#markup' => '<h2>' . t('Upload Registrants for this Event') . '</h2>',
+		'#weight' => -50,
+	);
+	$form['help'] = array(
+		'#markup' => '<div class="help-row"><label>View the Template</label>  ' . l('XLSX Template', 'templates/attendees.xlsx', array('attributes' => array('class' => array('big-button'), 'style' => 'font-style:normal;width:165px;', 'target' => '_blank'))) . '</div>'
+		. '<div class="help-row"><label>Get help</label>' . l('Template Help', 'eaton_backbone/help/xls_template', array('attributes' => array('class' => array('big-button'), 'target' => '_blank', 'style' => 'font-style:normal; width: 185px'))) . '</div>'
+		,
+		'#prefix' => '<div class="form-help">',
+		'#suffix' => '</div>',
+	);
+	$form['description'] = array(
+		'#markup' => '<div class="form-help"><div class="description"><em>Please upload an XLS or XLSX file derived from the template only.</em></div></div>',
+	);
+	$form['registrant_csv'] = array(
+		'#type' => 'managed_file',
+		'#description' => '',
+		'#upload_validators' => array(
+			'file_validate_extensions' => array('xls xlsx'),
+		),
+		'#upload_location' => 'public://attendees_node_' . $node->nid . '/',
+	);
+	// $form['auto_send_emails'] = array(
+	// 	'#type' => 'checkbox',
+	// 	'#title' => 'Send email notifications',
+	// );
+	$form['nid'] = array(
+		'#type' => 'hidden',
+		'#value' => $node->nid,
+	);
+	$form['actions'] = array(
+		'#type' => 'actions',
+	);
+	$form['actions']['submit'] = array(
+		'#value' => t('Submit Registrants'),
+		'#type' => 'submit',
+	);
+	return $form;
+}
+
+function eaton_backbone_approved_event_preregistration_upload_form_validate($form, &$form_state) {
+	if ($file = file_load($form_state['values']['registrant_csv'])) {
+		$file_path = drupal_realpath($file->uri);
+
+		module_load_include('inc', 'phpexcel', 'phpexcel');
+		$library = libraries_load('PHPExcel');
+
+		if (!empty($library['loaded'])) {
+			/* Internal function to find header row in XLS file */
+			function findHeaderRow($search, $xls_file_path) {
+				$xls_reader = PHPExcel_IOFactory::createReaderForFile($xls_file_path);
+				$xls_reader->setReadDataOnly(true);
+				$xls_data = $xls_reader->load($xls_file_path);
+				$found = false;
+				$index = -1;
+				$i = 0;
+				foreach ($xls_data->getWorksheetIterator() as $worksheet) {
+					$j = 0;
+					foreach ($worksheet->getRowIterator() as $row) {
+						$cells = array();
+						if ($i === 0 && $j === 0 && !$found) {
+							$cells = $row->getCellIterator();
+							$invalid = false;
+							$k = 0;
+							foreach ($cells as $cell) {
+								if ($k < count($search)) {
+									$value = $cell->getValue();
+									$value = drupal_strlen($value) ? trim($value) : '';
+									if (strtolower($value) != strtolower($search[$k])) {
+										$invalid = true;
+									}
+								}
+								$k++;
+							}
+							$found = !$invalid;
+							if ($found) {
+								$index = $j;
+							}
+						}
+						$j++;
+					}
+					$i++;
+				}
+				// Free up memory.
+				$xls_data->disconnectWorksheets();
+				unset($xls_data);
+
+				return array(
+					'found' => $found,
+					'index' => $index,
+				);
+			}
+
+			/* Internal function to find valid rows according to header */
+			function findValidRows($import, $header) {
+				$fieldCount = count($header);
+				$rows = array();
+				foreach ($import[0] as $rowIdx => $row) {
+					$non_empty = array_filter($row, function ($cell) {
+						return !empty($cell);
+					});
+
+					if (!empty($non_empty)) {
+						$i = 0;
+						foreach ($row as $key => $val) {
+							if (!in_array($key, $header)) {
+								unset($row[$key]);
+							} elseif (!empty($val)) {
+								$i++;
+							}
+						}
+						if ($i == $fieldCount) {
+							$rows[] = $row;
+						}
+					}
+				}
+				return $rows;
+			}
+
+			$template = _attendeeresource_generate_template_from_schema('attendeeresource_attendees');
+			$headerRow = findHeaderRow($template, $file_path);
+
+			if ($headerRow['found'] !== false && $headerRow['index'] === 0) {
+				$import = phpexcel_import($file_path);
+				if (!$import) {
+					form_set_error('registrant_csv', 'Attendee file was empty or invalid.  Please view the template ' . l('attendees.xlsx', 'templates/attendees.xlsx', array('attributes' => array('target' => '_blank'))) . ' for the proper formatting.');
+				} else {
+					$valid_rows = findValidRows($import, $template);
+					$form_state['valid_rows'] = $valid_rows;
+					//$visitor_types = _eaton_backbone_visitor_types(false); // Job Function
+					$market_focus = _eaton_backbone_market_focus(false); // Industry
+					$countries = _country_taxonomy_country_options();
+					foreach ($valid_rows as $idx => $row) {
+						if (!valid_email_address($row['email'])) {
+							form_set_error('registrant_csv', t('Row @row contains an invalid email address: <em>@input</em>.  Please correct and try again.', array('@row' => $idx + 1, '@input' => $row['email'])));
+						}
+						// if (!in_array($row['Job Function'], $visitor_types)) {
+						// 	form_set_error('registrant_csv', t('Row @row contains an invalid Job Function: <em>@input</em>.  Please use a value from the drop-down list and try again.', array('@row' => $idx + 1, '@input' => $row['Job Function'])));
+						// }
+						if (!in_array($row['Industry'], $market_focus)) {
+							form_set_error('registrant_csv', t('Row @row contains an invalid Industry: <em>@input</em>.  Please use a value from the drop-down list and try again.', array('@row' => $idx + 1, '@input' => $row['Industry'])));
+						}
+						if (!in_array($row['country'], $countries)) {
+							form_set_error('registrant_csv', t('Row @row contains an invalid country: <em>@input</em>.  Please use a value from the drop-down list and try again.', array('@row' => $idx + 1, '@input' => $row['country'])));
+						}
+					}
+				}
+			} else {
+				$help_link = l('help page', 'eaton_backbone/help/csv_template');
+				$template_link = l('the template', 'templates/attendees.xlsx');
+				$error_msg = sprintf(
+					'A valid row of header columns was not found at the first row.  Please view the %s, and/or redownload %s and fill in your data on that sheet.',
+					l('help page', 'eaton_backbone/help/xls_template'),
+					l('the template', 'templates/attendees.xlsx')
+				);
+				form_set_error('registrant_csv', $error_msg);
+			}
+		}
+	}
+}
+
+function eaton_backbone_approved_event_preregistration_upload_form_submit($form, &$form_state) {
+	$nid = $form_state['values']['nid'];
+	//dpm(array($nid, file_load($form_state['values']['registrant_csv'])));
+	if (isset($form_state['valid_rows'])) {
+		$auto_send = $form_state['values']['auto_send_emails'] == 1;
+		$messages = array();
+		$warnings = array();
+		foreach ($form_state['valid_rows'] as &$row) {
+			// convert country to 2-letter code
+			$country = _country_taxonomy_country($row['country']);
+			if ($country) {
+				$wrapper = entity_metadata_wrapper('taxonomy_term', $country);
+				$country_code = $wrapper->field_iso_code->value();
+				$row['country'] = $country_code;
+				$state = _country_taxonomy_state($country_code, $row['state']);
+				if ($state) {
+					$wrapper = entity_metadata_wrapper('taxonomy_term', $state);
+					$state_code = $wrapper->field_iso_code->value();
+					$row['state'] = $state_code;
+				}
+			}
+			if (empty($row['zip'])) {
+				$row['zip'] = '';
+			}
+			// Check if this email exists as an attendee
+			$attendee = _attendeeresource_lookup_attendee($row['email']);
+			if ($attendee) {
+				// Let user know no attendee needed to be created
+				$warnings[] = '<li>' . t('<em>@email</em> already existed as an attendee, so they did not need to be created', array('@email' => $row['email'])) . '</li>';
+				// Check if this attendee is registered for this event
+				$events = _attendeeresource_attendee_events($attendee->attendee_id);
+				if (!$events || !isset($events[$nid])) {
+					// Register this attendee for event
+					_attendeeresource_add_attendee_to_event($attendee->attendee_id, $nid);
+					// if ($auto_send) {
+					// 	_eaton_backbone_dispatch_preregistration_email($attendee->attendee_id, $nid);
+					// }
+					$messages[] = '<li>' . t('<em>@email</em> has been successfully registered for this event.', array('@email' => $row['email'])) . '</li>';
+				} else {
+					// Attendee is both in the system and registered for this event, skip them.
+					$warnings[] = '<li>' . t('<em>@email</em> has already been registered for this event, so they were skipped.', array('@email' => $row['email'])) . '</li>';
+				}
+			} else {
+				// Attendee doesn't exist, so create and add to event.
+				$attendee_id = _attendeeresource_add_attendee((object) $row);
+				_attendeeresource_add_attendee_to_event($attendee_id, $nid);
+				$messages[] = '<li>' . t('<em>@email</em> has been successfully added to attendees and registered for this event.', array('@email' => $row['email'])) . '</li>';
+			}
+		}
+		// Alert user to warnings / messages.
+		if ($warnings) {
+			drupal_set_message('<ul>' . implode("\r\n", $warnings) . '</ul>', 'warning');
+		}
+		if ($messages) {
+			drupal_set_message('<ul>' . implode("\r\n", $messages) . '</ul>');
+		}
+	}
+}
+
+/**
+ * Approved Event Preregistration Add Existing Registrant form
+ *
+ * Form build
+ * Validate
+ * Submit
+ */
+function eaton_backbone_approved_event_preregistration_add_existing_registrant_form($form, &$form_state, $node) {
+	// Gather attendees
+	$attendees = _attendeeresource_attendees();
+	$options = array(-1 => '--');
+	if ($attendees) {
+		// Filter out attendees that are already registered for this event
+		foreach ($attendees as $attendee_id => $attendee) {
+			$add_this = true;
+			if (isset($attendee->events)) {
+				if (in_array($node->nid, array_keys($attendee->events))) {
+					$add_this = false;
+				}
+			}
+			if ($add_this) {
+				$options[$attendee_id] = $attendee->first_name . ' ' . $attendee->last_name . ' (' . $attendee->email . ')';
+			}
+		}
+	}
+	$form['nid'] = array(
+		'#type' => 'hidden',
+		'#value' => $node->nid,
+	);
+	$form['heading'] = array(
+		'#markup' => t('Add Existing Registrant(s) to this Event'),
+		'#prefix' => '<h2>',
+		'#suffix' => '</h2>',
+	);
+	if (count($options) > 1) {
+		$form['attendee_id'] = array(
+			'#title' => t('Existing Registrant'),
+			'#type' => 'select',
+			'#multiple' => true,
+			'#options' => $options,
+		);
+		$form['auto_send_emails'] = array(
+			'#type' => 'checkbox',
+			'#title' => 'Send email notification',
+		);
+		$form['actions'] = array(
+			'#type' => 'actions',
+		);
+		$form['actions']['submit'] = array(
+			'#type' => 'submit',
+			'#value' => t('Add Registrant(s)'),
+		);
+	} else {
+		$form['attendee_empty'] = array(
+			'#markup' => t('Sorry, there are no more available attendees to add to this event.'),
+			'#prefix' => '<p>',
+			'#suffix' => '</p>',
+		);
+	}
+	return $form;
+}
+
+function eaton_backbone_approved_event_preregistration_add_existing_registrant_form_validate($form, &$form_state) {
+	if ($form_state['values']['attendee_id'] == -1) {
+		form_set_error('attendee_id', 'Invalid registrant chosen.');
+	}
+}
+
+function eaton_backbone_approved_event_preregistration_add_existing_registrant_form_submit($form, &$form_state) {
+	$values = $form_state['values'];
+	$attendee_id_values = $values['attendee_id'];
+	$nid = $values['nid'];
+
+	foreach ($attendee_id_values as $attendee_id) {
+		if ($attendee_id != -1) {
+			if (_attendeeresource_add_attendee_to_event($attendee_id, $nid)) {
+				$attendee = _attendeeresource_get_attendee($attendee_id);
+				$msg = t('Attendee @first @last <em>(@email)</em> has been successfully preregistered for this event', array('@first' => $attendee->first_name, '@last' => $attendee->last_name, '@email' => $attendee->email));
+
+				$auto_send = $form_state['values']['auto_send_emails'] == 1;
+				if ($auto_send) {
+					_eaton_backbone_dispatch_preregistration_email($attendee_id, $nid);
+					$msg .= ' and a preregistration email was dispatched to attendee\'s email address.';
+				}
+
+				drupal_set_message($msg);
+			}
+		}
+	}
+}
+
+/**
+ * Single Attendee Registration Form (used both for public and prereg)
+ *
+ * Returns event_registrant form
+ *
+ * Form preprocess
+ * Form build
+ * Validate
+ * Submit
+ */
+/**
+ * function eaton_backbone_build_registrant_form().
+ * Approved Event Registration Form Build
+ *
+ * This function builds out the event registration form (taken as a reference)
+ *
+ * @param type $form
+ * @param type $form_state
+ * @param type $node
+ */
+function eaton_backbone_build_registrant_form(&$form, $node, $options) {
+
+	$submit_text = isset($options['submit_text']) ? $options['submit_text'] : 'Submit';
+
+	module_load_include('install', 'attendeeresource', 'attendeeresource');
+	$schema = attendeeresource_schema();
+	$table = $schema['attendeeresource_attendees'];
+
+	$form['#attributes']['class'][] = 'states-dropdown';
+	$form['nid'] = array('#type' => 'hidden', '#value' => $node->nid);
+
+	$country_options = _country_taxonomy_country_options();
+	$state_options = array(-1 => '-- Select One -- ');
+	$state_options += _country_taxonomy_state_options();
+
+	foreach ($table['fields'] as $field_name => $field) {
+		$field_label = ucwords(str_replace('_', ' ', $field_name));
+		switch ($field_name) {
+		case 'city':
+		case 'zip':
+		case 'picture':
+		case 'visitor_type':
+			$form[$field_name] = [
+				'#type' => 'hidden',
+				'#default_value' => '',
+				'#value' => '',
+				'#name' => $field_name,
+			];
+			break;
+		case 'first_name':
+		case 'last_name':
+		case 'company':
+		case 'title':
+		case 'email':
+			$form[$field_name] = array(
+				'#type' => 'textfield',
+				'#title' => $field_label,
+				'#required' => true,
+				'#name' => $field_name,
+			);
+			if ($field_name == 'email') {
+				$form[$field_name]['#weight'] = -50;
+			}
+			if ($field_name == 'zip') {
+				$form[$field_name]['#required'] = false;
+			}
+			break;
+		case 'state':
+			$form[$field_name] = array(
+				'#title' => $field_label,
+				'#type' => 'select',
+				'#options' => $state_options,
+			);
+			break;
+		case 'country':
+			$form[$field_name] = array(
+				'#title' => $field_label,
+				'#type' => 'select',
+				'#options' => $country_options,
+				'#required' => true,
+			);
+			break;
+		// case 'picture':
+		//     $form[$field_name] = array(
+		//     '#title' => $field_label,
+		//     '#type' => 'managed_file',
+		//     '#upload_location' => 'public://attendee_pictures/',
+		//     '#weight' => -49,
+		//     );
+		//     break;
+		// case 'visitor_type':
+		//     $form[$field_name] = array(
+		//     '#title' => t('Job Function'),
+		//     '#type' => 'select',
+		//     '#options' => _eaton_backbone_visitor_types(),
+		//     '#required' => true
+		//     );
+		//     break;
+		case 'market_focus':
+			$form[$field_name] = array(
+				'#title' => t('Industry'),
+				'#type' => 'select',
+				'#options' => _eaton_backbone_market_focus(),
+				'#required' => false,
+			);
+			break;
+		default:
+			//  dpm(array($field_name => $field));
+		}
+	}
+	$form['actions'] = array(
+		'#type' => 'actions',
+	);
+	$form['actions']['submit'] = array(
+		'#type' => 'submit',
+		'#value' => t($submit_text),
+	);
+
+}
+
+function _eaton_backbone_visitor_types($include_empty = true) {
+	$types = array(
+		"Development & Planning",
+		"Economics",
+		"Engineering",
+		"Environmental, Health & Safety",
+		"Facilities Manager",
+		"Finance",
+		"Human Resources",
+		"Information Technology",
+		"Manufacturing",
+		"Marketing",
+		"Multi-Function Executive",
+		"Operations",
+		"PR/Media",
+		"Professional Services",
+		"Sales",
+		"Skilled/Technician",
+		"Supply Chain/Purchasing",
+		// "Other",
+		// "Management",
+		// "Engineering",
+		// "Procurement",
+		// "Project Management",
+		// "Sales",
+		// "Marketing",
+		// "Human Resources",
+		// "Accounting/Finance",
+		// "IT",
+		// "Student",
+		// "Other"
+	);
+	$types = drupal_map_assoc($types);
+	if ($include_empty) {
+		$types = array_merge(array("" => "- None -"), $types);
+	}
+	return $types;
+}
+
+function _eaton_backbone_visitor_types_from_field() {
+	$field = field_info_field('field_visitor_type');
+	return $field['settings']['allowed_values'];
+}
+
+function _eaton_backbone_market_focus($include_empty = true) {
+	$types = array(
+		"Aerospace",
+		"Agriculture/Food Processing",
+		"Commercial Construction",
+		"Communications/Broadcasting/Publishing",
+		"Consulting",
+		"Data Centers",
+		"Distributor - Electrical",
+		"Education",
+		"Electric Utilities",
+		"Finance/Banking/Accounting/Insurance/Legal",
+		"Fire Safety and Notification",
+		"Forestry Products",
+		"Government/Military",
+		"Home Construction/Remodeling",
+		"Hospitals/Healthcare",
+		"Hotels/Amusement/Gaming",
+		"IT Equipment/Services",
+		"Manufacturing",
+		"Marine/Ship building",
+		"Mining and Processing",
+		"OEM - Electrical Equipment",
+		"OEM - Machinery",
+		"Oil and Gas",
+		"Pharmaceutical/ Biotech",
+		"Property Management/Real Estate/building automation",
+		"Recreation/RV Park/Campground",
+		"Retail/big box/multi-site",
+		"Software",
+		"Solar",
+		"Telecommunications/Cable",
+		"Transportation/Airports/Seaports/Infrastructure",
+		"Water/Wastewater",
+		// "Other",
+		// "Healthcare",
+		// "Education",
+		// "Oil and Gas",
+		// "Pulp and Paper",
+		// "Mining",
+		// "Metals",
+		// "Cement",
+		// "Machine Builders (OEM)",
+		// "Industrial (Other)",
+		// "Electric Utilities",
+		// "Water/Waste Water",
+		// "Data Centers",
+		// "Telecom",
+		// "Automation and Control",
+		// "Commercial Construction/Buildings",
+		// "Residential",
+		// "Electrical Contractor",
+		// "Food and Beverage",
+		// "IT",
+		// "Automotive",
+		// "Transportation",
+		// "Government",
+	);
+	$types = drupal_map_assoc($types);
+	if ($include_empty) {
+		$types = array_merge(array("" => "- None -"), $types);
+	}
+	return $types;
+}
+
+function _eaton_backbone_market_focus_from_field() {
+	$field = field_info_field('field_market_focus');
+	return $field['settings']['allowed_values'];
+}
+
+function eaton_backbone_event_registrant_form($form, &$form_state, $node, $options = array()) {
+	$form['#country_taxonomy_add_js'] = true;
+	eaton_backbone_build_registrant_form($form, $node, $options);
+	return $form;
+}
+
+function eaton_backbone_event_registrant_form_validate($form, &$form_state) {
+	if (form_get_errors()) {
+		return;
+	} // Prevent cascading validation
+	$countries = _country_taxonomy_countries(true, true);
+	$values = $form_state['values'];
+	$country = $values['country'];
+	$state = $values['state'];
+
+	if ($state == -1 && isset($countries[$country]) && isset($countries[$country]->states)) {
+		form_set_error('state', t('State field must be filled out if chosen country is @country', array('@country' => $countries[$country]->name)));
+	}
+	$nid = $values['nid'];
+	$email = $values['email'];
+	// Ensure attendee does not exist for this event.
+	if (_attendeeresource_email_exists_event($email, $nid)) {
+		form_set_error('email', t('The email address @email has already been registered for this event.', array('@email' => $email)));
+	}
+}
+
+function eaton_backbone_event_registrant_form_submit($form, &$form_state) {
+	$path = current_path();
+	$attendee = new stdClass();
+	$nid = $form_state['values']['nid'];
+	module_load_include('install', 'attendeeresource', 'attendeeresource');
+	$schema = attendeeresource_schema();
+	$table = $schema['attendeeresource_attendees'];
+	$email = $form_state['values']['email'];
+	$existing_attendee = _attendeeresource_lookup_attendee($email);
+	if ($existing_attendee) {
+		$attendee_id = $existing_attendee->attendee_id;
+		// Update existing attendee information
+		$edit = array();
+		foreach ($table['fields'] as $field_name => $field) {
+			switch ($field_name) {
+			case 'attendee_id':
+			case 'created':
+				break;
+			default:
+				if (isset($form_state['values'][$field_name]) && !empty($form_state['values'][$field_name])) {
+					$edit[$field_name] = $form_state['values'][$field_name];
+				}
+			}
+		}
+		$attendee = _attendeeresource_update_attendee($attendee_id, $edit);
+		drupal_set_message(t('@email has already used this system before. The account details were updated with the new information provided.', array('@email' => $email)), 'warning');
+	} else {
+		foreach ($table['fields'] as $field_name => $field) {
+			switch ($field_name) {
+			case 'attendee_id':
+			case 'created':
+				break;
+			default:
+				$attendee->{$field_name} = $form[$field_name]['#value'];
+			}
+		}
+		$attendee_id = _attendeeresource_add_attendee($attendee);
+	}
+	$error = true;
+
+	if ($attendee_id) {
+		if (_attendeeresource_add_attendee_to_event($attendee_id, $nid)) {
+			$error = false;
+		}
+	}
+	if (!$error) {
+		if (strpos($path, 'event/') !== false) {
+			// preregister page
+			$receipt_id = _eaton_backbone_encrypt_registration_id($nid, $attendee_id);
+			_eaton_backbone_dispatch_registration_email($attendee_id, $nid, $receipt_id);
+			drupal_set_message(t('Attendee @first_name @last_name (@email) was successfully preregistered for this event.', array('@first_name' => $attendee->first_name, '@last_name' => $attendee->last_name, '@email' => $attendee->email)));
+		} elseif (strpos($path, 'register/') !== false) {
+			// register page
+			$receipt_id = _eaton_backbone_encrypt_registration_id($nid, $attendee_id);
+			_eaton_backbone_dispatch_registration_email($attendee_id, $nid, $receipt_id);
+			drupal_goto('thanks/' . $receipt_id);
+		}
+	} else {
+		drupal_set_message('Something went wrong when registering for the event.  Please try again later or ' . l('contact', 'contact') . ' the site administrator.', 'error');
+	}
+}
+
+/**
+ * function eaton_backbone_event_registrant_edit_form().
+ * Approved Event Attendee Registration EDIT form
+ *
+ * Uses same build function as new attendee registration form
+ * Gets pulled into a jQuery dialog, and submitted via services.  The submit callback is not used.
+ */
+function eaton_backbone_event_registrant_edit_form($form, &$form_state, $node, $options = array()) {
+	eaton_backbone_build_registrant_form($form, $node, $options);
+	// Override picture element
+	$form['picture'] = array(
+		'#type' => 'file',
+		'#name' => 'picture',
+		'#title' => t('Update Picture'),
+		'#weight' => 50,
+	);
+	$form['picture_preview'] = array(
+		'#prefix' => '<div class="form-item form-item-picture-preview" style="display:none">',
+		'#markup' => '<label>Preview New Picture</label><img id="event_registrant_new_picture" />',
+		'#suffix' => '</div>',
+		'#weight' => 51,
+	);
+//  $form['picture']['#title'] = t('Update Picture');
+	//  $form['picture']['#weight'] = 50;
+
+	// Add current picture markup
+	$form['current_picture'] = array(
+		'#markup' => '<label>Current Picture</label><p class="empty">None</p><button id="remove-picture-button">Remove</button><img id="event_registrant_current_picture" />',
+		'#prefix' => '<div class="form-item form-item-event-registrant-current-picture">',
+		'#suffix' => '</div>',
+		'#weight' => 49,
+	);
+	return $form;
+}
+
+/**
+ * After build functions for forms
+ */
+function eaton_backbone_event_request_node_form_after_build($form, $form_state) {
+	eaton_backbone_add_timezone_js();
+	drupal_add_js(drupal_get_path('module', 'eaton_backbone') . '/js/node_form_fields.js');
+	drupal_add_js(drupal_get_path('module', 'eaton_backbone') . '/js/field_collection_validation.js');
+	return $form;
+}
+
+function eaton_backbone_add_timezone_support($form, $form_state) {
+	$options = array();
+	$timezones = eaton_backbone_timezone_enabled_identifiers_list();
+	$locations = eaton_backbone_eaton_locations();
+	foreach ($locations as $location) {
+		$timezone = $location->timezone;
+		$options[$location->location_code] = array(
+			'description' => $timezones[$timezone],
+			'current_time' => format_date(time(), 'medium', '', $timezone),
+		);
+	}
+	drupal_add_js(array('eaton_backbone_location_timezones' => $options), 'setting');
+	return $form;
+}
+
+function eaton_backbone_public_event_registrant_form_after_build($form, $form_state) {
+	drupal_add_js(drupal_get_path('module', 'eaton_backbone') . '/js/jquery.base64.js');
+	drupal_add_js(drupal_get_path('module', 'eaton_backbone') . '/js/email_check.js');
+	drupal_add_js(array('email_check' => array('security_token' => ATTENDEERESOURCE_SECURITY_TOKEN)), 'setting');
+	return $form;
+}
+
+/**
+ * Custom validation for node form
+ */
+
+// function eaton_backbone_node_validate($node, $form, &$form_state) {
+//   if ($node->type == 'event_request' && is_null($node->nid)) {
+//     $values = $form_state['values'];
+//     // Make sure there is at least one valid visitor information field entry
+//     $visitor_information = $values['field_visitor_information'][LANGUAGE_NONE];
+//     foreach($visitor_information as $delta => $visitor) {
+//       if (is_array($visitor)) {
+//           $vista_number = $visitor['field_visitor_vista_number'][LANGUAGE_NONE][0]['value'];
+//           $vista_unknown = $visitor['field_vista_unknown'][LANGUAGE_NONE][0]['value'];
+//           if (empty($vista_number) && $vista_unknown === 0) {
+//             form_error($form['field_visitor_information'][LANGUAGE_NONE][$delta],t('Either a VISTA Number must be entered or the Vista Number Unknown box must be checked.'));
+//             drupal_set_message(t('Either a VISTA Number must be entered or the Vista Number Unknown box must be checked.'),'error');
+//           }
+//       }
+//     }
+//   }
+// }
+
+/**
+ * Helper functions
+ */
+function _eaton_backbone_events($filters = array(), $load_entities = true) {
+	$query = new EntityFieldQuery();
+	$query->entityCondition('entity_type', 'node')
+		->propertyCondition('status', 1)
+		->propertyCondition('type', 'event_request');
+	if (!empty($filters)) {
+		foreach ($filters as $name => $value) {
+			switch ($name) {
+			case 'min_date':
+				$query->fieldCondition('field_approved_date', 'value', $value, '>=');
+				break;
+			case 'max_date':
+				$query->fieldCondition('field_approved_date', 'value', $value, '<=');
+				break;
+			case 'min_end_date':
+				$query->fieldCondition('field_approved_date', 'value2', $value, '>=');
+				break;
+			case 'max_end_date':
+				$query->fieldCondition('field_approved_date', 'value2', $value, '<=');
+				break;
+			case 'request_status':
+				$query->fieldCondition('field_request_status', 'value', $value);
+				break;
+			}
+		}
+	}
+	$result = $query->execute();
+	if (!empty($result)) {
+		if ($load_entities) {
+			$nodes = node_load_multiple(array_keys($result['node']));
+			foreach ($nodes as $node) {
+				$node->id = $node->nid;
+			}
+			return $nodes;
+		} else {
+			return $result['node'];
+		}
+	}
+	return false;
+}
+
+function _eaton_backbone_event($event_id) {
+	$query = new EntityFieldQuery();
+	$query->entityCondition('entity_type', 'node')
+		->propertyCondition('type', 'event_request')
+		->fieldCondition('field_request_status', 'value', 'approved')
+		->entityCondition('entity_id', $event_id);
+	$result = $query->execute();
+	if (!empty($result)) {
+		$node = node_load(key($result['node']));
+		return $node;
+	}
+	return false;
+}
+
+function _eaton_backbone_event_is_denied($node) {
+	return !empty($node->field_request_status) && $node->field_request_status[LANGUAGE_NONE][0]['value'] == 'denied';
+}
+
+function _eaton_backbone_event_is_approved($node) {
+	return !empty($node->field_request_status) && $node->field_request_status[LANGUAGE_NONE][0]['value'] == 'approved';
+}
+
+function _eaton_backbone_event_is_public($node) {
+	return ($node->field_event_visibility[LANGUAGE_NONE][0]['value'] == 'public');
+}
+
+function _eaton_backbone_is_coordinator($user) {
+	$role = user_role_load_by_name('event coordinator');
+	$role2 = user_role_load_by_name('administrator');
+	return array_key_exists($role->rid, $user->roles) || array_key_exists($role2->rid, $user->roles);
+}
+
+function _eaton_backbone_is_initiator($user) {
+	$role = user_role_load_by_name('event initiator');
+	return array_key_exists($role->rid, $user->roles);
+}
+
+function _eaton_backbone_redirect_to_node_edit($node) {
+	drupal_goto('node/' . $node->nid . '/edit');
+}
+
+function _eaton_backbone_user_owns_event($nid, $user) {
+	$node = node_load($nid);
+	return $node->uid == $user->uid;
+}
+
+/**
+ * Function _eaton_backbone_decrypt_receipt_id()
+ * Decrypts a string with RECEIPT_ID salt and checks if it exists as a node.
+ */
+function _eaton_backbone_decrypt_receipt_id($encrypted) {
+	$decrypted = _eaton_backbone_decrypt_string(EATON_RECEIPT_ID_SALT, $encrypted);
+	if (node_load($decrypted)) {
+		return $decrypted;
+	}
+	return false;
+}
+
+/**
+ * Function _eaton_backbone_encrypt_receipt_id()
+ * Encrypts an nid with RECEIPT_ID salt and returns it
+ */
+function _eaton_backbone_encrypt_receipt_id($nid) {
+	return _eaton_backbone_encrypt_string(EATON_RECEIPT_ID_SALT, $nid);
+}
+
+/**
+ * Function _eaton_backbone_decrypt_email_id()
+ * Decrypts a string with EMAIL_ID salt and returns it
+ */
+function _eaton_backbone_decrypt_email_id($encrypted) {
+	return _eaton_backbone_decrypt_string(EATON_EMAIL_ID_SALT, $encrypted);
+}
+
+/**
+ * Function _eaton_backbone_encrypt_email_id()
+ * Encrypts an nid with EMAIL_ID salt and returns it
+ */
+function _eaton_backbone_encrypt_email_id($nid) {
+	return _eaton_backbone_encrypt_string(EATON_EMAIL_ID_SALT, $nid);
+}
+
+/**
+ * Function _eaton_backbone_encrypt_registration_id()
+ * Encrypts a combination of nid, attendee_id, and type (public or private) event with RECEIPT_ID salt and returns it
+ */
+function _eaton_backbone_encrypt_registration_id($nid, $attendee_id, $type = 'public') {
+	return _eaton_backbone_encrypt_string(EATON_RECEIPT_ID_SALT, $nid . '|' . $attendee_id . '|' . $type);
+}
+
+/**
+ * Function _eaton_backbone_decrypt_registration_id()
+ * Decrypts a string and sees if it matches the pattern established by _eaton_backbone_encrypt_registration_id()
+ * and returns its components in associative array with keys: event_id, attendee_id, and type
+ */
+function _eaton_backbone_decrypt_registration_id($encrypted) {
+	$decrypted = _eaton_backbone_decrypt_string(EATON_RECEIPT_ID_SALT, $encrypted);
+	if (strpos($decrypted, '|') !== false) {
+		$components = explode('|', $decrypted);
+		if (!node_load($components[0])) {
+			// prevent working with bad data.
+			return false;
+		}
+		$output = array(
+			'event_id' => $components[0],
+			'attendee_id' => $components[1],
+		);
+		if (count($components) > 2) {
+			$output['type'] = $components[2];
+		}
+		return $output;
+	}
+	return false;
+}
+
+/**
+ * Function _eaton_backbone_decrypt_string().
+ * Decrypt a string with a salt and return it.
+ *
+ * @param type $salt
+ * @param type $string
+ * @return decrypted string
+ */
+function _eaton_backbone_decrypt_string($salt, $string) {
+	$cipher = new Cipher($salt);
+	return $cipher->decrypt($string);
+}
+
+/**
+ * Function _eaton_backbone_encrypt_string().
+ * Encrypt a string with a salt and return it.
+ *
+ * @param type $salt
+ * @param type $string
+ * @return encrypted string
+ */
+function _eaton_backbone_encrypt_string($salt, $string) {
+	$cipher = new Cipher($salt);
+	return $cipher->encrypt($string);
+}
+
+/**
+ * Function _eaton_backbone_csv_to_array().
+ *
+ * Read and return a CSV as an array
+ * @param string $uri
+ * @param string $delimiter
+ * @param boolean $first_row_is_header
+ * @return data or FALSE if file invalid
+ */
+function _eaton_backbone_csv_to_array($uri = '', $delimiter = ',', $first_row_is_header = true) {
+	$header = null;
+	$data = array();
+	$path = drupal_realpath($uri);
+	if (!file_exists($path) || !is_readable($path)) {
+		return false;
+	}
+	if (($handle = fopen($path, 'r')) !== false) {
+		while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+			if ($first_row_is_header && is_null($header)) {
+				$header = $row;
+			} else {
+				$datum = $row;
+				if ($first_row_is_header) {
+					$datum = array();
+					//dpm(array('header' => $header, 'row' => $row));
+					foreach ($header as $idx => $key) {
+						$datum[$key] = $row[$idx];
+					}
+				}
+				$data[] = $datum;
+			}
+		}
+		fclose($handle);
+	}
+	return $data;
+}
+/**
+ * Function _eaton_backbone_dispatch_request_email().
+ * Send "Event Request" email
+ *
+ * @param type $node
+ * @return $message
+ */
+function _eaton_backbone_dispatch_request_email($node) {
+	$user = user_load($node->uid);
+	$key = 'request';
+	$language = language_default();
+	$params = array();
+	$from = variable_get('site_mail', 'no-reply@eaton.com');
+	$send = false;
+	$to = $user->mail;
+	$message = drupal_mail('eaton_backbone', $key, $to, $language, $params, $from, $send);
+	$message['subject'] = 'Your Eaton Event Request: ' . $node->title;
+	$message['body'] = array();
+	$message['body'][] = theme_eaton_backbone_request_email(array('node' => $node));
+
+	// Retrieve the responsible implementation for this message.
+	$system = drupal_mail_system('eaton_backbone', $key);
+
+	// Format the message body.
+	$message = $system->format($message);
+
+	// Send e-mail.
+	$message['result'] = $system->mail($message);
+
+	return $message;
+}
+
+/**
+ * Function _eaton_backbone_dispatch_event_email().
+ * Send "Event Request" email
+ *
+ * @param type $node
+ * @return $message
+ */
+function _eaton_backbone_dispatch_event_email($node) {
+	$user = user_load($node->uid);
+	$key = 'request';
+	$language = language_default();
+	$params = array();
+	$from = variable_get('site_mail', 'no-reply@eaton.com');
+	$send = false;
+	$wrapper = entity_metadata_wrapper('node', $node);
+	$initiator_email = $wrapper->field_event_initiator_email->value();
+	$user_email = $initiator_email ?: $user->mail;
+	$to = ['chrisviccaro+psecdummy@gmail.com', $user_email];
+	$message = drupal_mail('eaton_backbone', $key, $to, $language, $params, $from, $send);
+	$message['subject'] = 'Your Eaton Event: ' . $node->title;
+	$message['body'] = array();
+	$message['body'][] = theme_eaton_backbone_event_email(array('node' => $node));
+
+	// Retrieve the responsible implementation for this message.
+	$system = drupal_mail_system('eaton_backbone', $key);
+
+	// Format the message body.
+	$message = $system->format($message);
+
+	// Send e-mail.
+	//$message['result'] = $system->mail($message);
+   dpm($message);
+	return $message;
+}
+
+/**
+ * Function _eaton_backbone_dispatch_approved_email().
+ * Send "Event Approved" email
+ *
+ * @param type $node
+ * @return $message
+ */
+function _eaton_backbone_dispatch_approved_email($node) {
+	$user = user_load($node->uid);
+	$key = 'approved';
+	$language = language_default();
+	$params = array();
+	$from = variable_get('site_mail', 'no-reply@eaton.com');
+	$send = false;
+	$to = $user->mail;
+	$message = drupal_mail('eaton_backbone', $key, $to, $language, $params, $from, $send);
+	$message['subject'] = 'Eaton Event Request ' . $node->title . ' has received approval';
+	$message['body'] = array();
+	$message['body'][] = theme_eaton_backbone_approved_email(array('node' => $node));
+
+	// Retrieve the responsible implementation for this message.
+	$system = drupal_mail_system('eaton_backbone', $key);
+
+	// Format the message body.
+	$message = $system->format($message);
+
+	// Send e-mail.
+	//$message['result'] = $system->mail($message);
+	dpm($message);
+	return $message;
+}
+
+/**
+ * Function _eaton_backbone_dispatch_denied_email().
+ * Send "Event Denied" email
+ *
+ * @param type $node
+ * @return $message
+ */
+function _eaton_backbone_dispatch_denied_email($node) {
+	$user = user_load($node->uid);
+	$key = 'denied';
+	$language = language_default();
+	$params = array();
+	$from = variable_get('site_mail', 'no-reply@eaton.com');
+	$send = false;
+	$to = $user->mail;
+	$message = drupal_mail('eaton_backbone', $key, $to, $language, $params, $from, $send);
+	$message['subject'] = 'Eaton Event Request ' . $node->title . ' has been denied';
+	$message['body'] = array();
+	$message['body'][] = theme_eaton_backbone_denied_email(array('node' => $node));
+
+	// Retrieve the responsible implementation for this message.
+	$system = drupal_mail_system('eaton_backbone', $key);
+
+	// Format the message body.
+	$message = $system->format($message);
+
+	// Send e-mail.
+	//$message['result'] = $system->mail($message);
+	dpm($message);
+	return $message;
+}
+
+/**
+ * Function _eaton_backbone_dispatch_registration_email().
+ * Send "registration" email
+ *
+ * @param type $attendee_id
+ * @param type $nid
+ * @param type $receipt_id
+ * @param type $subject (allows tokens: @title)
+ * @return $message
+ */
+function _eaton_backbone_dispatch_registration_email($attendee_id, $nid, $receipt_id, $subject = null, $msg = null) {
+	$key = 'public_registration';
+	$attendee = _attendeeresource_get_attendee($attendee_id);
+	$components = _eaton_backbone_decrypt_registration_id($receipt_id);
+	$is_preregistration = isset($components['type']) && $components['type'] == 'pre';
+
+	$public_defaults = _eaton_backbone_public_registration_email_defaults();
+	$preregistration_defaults = _eaton_backbone_preregistration_email_defaults();
+
+	if (empty($subject)) {
+		$subject = $is_preregistration ? $preregistration_defaults['subject'] : $public_defaults['subject'];
+	}
+	if (empty($msg)) {
+		$msg = $is_preregistration ? $preregistration_defaults['message'] : $public_defaults['message'];
+	}
+	$node = node_load($nid);
+	$language = language_default();
+	$params = array();
+	$from = variable_get('site_mail', 'no-reply@eaton.com');
+	$send = false;
+	$to = $attendee->email;
+	$message = drupal_mail('eaton_backbone', $key, $to, $language, $params, $from, $send);
+
+	$message['subject'] = t($subject, array('@title' => $node->title));
+	$message['body'] = array();
+
+	$vars = array(
+		'attendee' => $attendee,
+		'node' => $node,
+		'receipt_id' => $receipt_id,
+		'message' => $msg,
+	);
+	$message['body'][] = theme_eaton_backbone_registration_email($vars);
+
+	// Retrieve the responsible implementation for this message.
+	$system = drupal_mail_system('eaton_backbone', $key);
+
+	// Format the message body.
+	$message = $system->format($message);
+
+	// Send e-mail.
+	//$message['result'] = $system->mail($message);
+	dpm($message);
+	return $message;
+}
+
+/**
+ * Function _eaton_backbone_dispatch_preregistration_email().
+ * Helper function to dispatch registration email with message/subject filled out for preregistration scenario.
+ */
+function _eaton_backbone_dispatch_preregistration_email($attendee_id, $nid) {
+	$receipt_id = _eaton_backbone_encrypt_registration_id($nid, $attendee_id, 'pre');
+	return _eaton_backbone_dispatch_registration_email($attendee_id, $nid, $receipt_id);
+}
+
+function _eaton_backbone_dispatch_suggested_date_accepted_email($node) {
+	$node_wrapper = entity_metadata_wrapper('node', $node);
+	$node_event_location = $node_wrapper->field_event_location->value();
+	$user = user_load($node->uid);
+	$key = 'suggested_date_accepted';
+	$language = language_default();
+	$params = array();
+	$from = variable_get('site_mail', 'no-reply@eaton.com');
+	$coordinators = _eaton_backbone_coordinators($node_event_location);
+	$to_array = array();
+	foreach ($coordinators as $coordinator) {
+		$to_array[] = $coordinator->mail;
+	}
+	$send = false;
+	$to = implode(',', $to_array);
+	//dpm(array('sending message to' => $to));
+	$message = drupal_mail('eaton_backbone', $key, $to, $language, $params, $from, $send);
+	$message['subject'] = 'Eaton Event Request ' . $node->title . '\'s suggested date has been accepted';
+	$message['body'] = array();
+	$message['body'][] = theme_eaton_backbone_suggested_date_accepted_email(array('node' => $node));
+
+	// Retrieve the responsible implementation for this message.
+	$system = drupal_mail_system('eaton_backbone', $key);
+
+	// Format the message body.
+	$message = $system->format($message);
+
+	// Send e-mail.
+	//$message['result'] = $system->mail($message);
+	dpm($message);
+	return $message;
+}
+/**
+ * Function _eaton_backbone_public_registration_email_defaults().
+ *
+ * @return assoc array with subject/message
+ */
+function _eaton_backbone_public_registration_email_defaults() {
+	return array(
+		'subject' => 'Confirmation of your registration for @title Eaton event',
+		'message' => 'Thank you, @first_name @last_name, for registering for this Eaton event.',
+	);
+}
+
+/**
+ * Function _eaton_backbone_preregistration_email_defaults().
+ *
+ * @return assoc array with subject/message
+ */
+function _eaton_backbone_preregistration_email_defaults() {
+	return array(
+		'subject' => 'You have been preregistered for the Eaton event @title',
+		'message' => '@first_name @last_name, you have been preregistered for this Eaton event.',
+	);
+}
+
+/**
+ * Function _eaton_backbone_event_request_receipts().
+ *
+ * Return all receipts mapped to nid
+ *
+ * @param $uid int
+ * @return $receipts array
+ */
+function _eaton_backbone_event_request_receipts($uid = null) {
+	$query = db_select('node', 'n')
+		->fields('n', array('nid'))
+		->condition('type', 'event_request');
+	if (!is_null($uid)) {
+		$query->condition('uid', $uid);
+	}
+	$nids = $query->execute()->fetchCol();
+
+	$receipts = array();
+	foreach ($nids as $nid) {
+		$receipts[$nid] = _eaton_backbone_encrypt_receipt_id($nid);
+	}
+	return $receipts;
+}
+
+/**
+ * Function _eaton_backbone_event_request_email_receipts().
+ *
+ * Return all email receipts mapped to nid
+ *
+ * @param $uid int
+ * @return $receipts array
+ */
+function _eaton_backbone_event_request_email_receipts($uid = null) {
+	$query = db_select('node', 'n')
+		->fields('n', array('nid'))
+		->condition('type', 'event_request');
+	if (!is_null($uid)) {
+		$query->condition('uid', $uid);
+	}
+	$nids = $query->execute()->fetchCol();
+
+	$receipts = array();
+	foreach ($nids as $nid) {
+		$receipts[$nid] = _eaton_backbone_encrypt_email_id($nid);
+	}
+	return $receipts;
+}
+
+/**
+ * Implements hook_node_access().
+ */
+function eaton_backbone_node_access($node, $op, $account) {
+	$type = is_string($node) ? $node : $node->type;
+
+	dpm([$node, $op, $account]);
+
+	// Returning nothing from this function would have the same effect.
+	return NODE_ACCESS_IGNORE;
+}
+
+/**
+ * Implements hook_node_access_records().
+ * @param type $node
+ * @return array $grants
+ */
+function eaton_backbone_node_access_records($node) {
+	$grants = array();
+	if ($node->type == 'event_request') {
+		$grants[] = array(
+			'realm' => 'all',
+			'gid' => 0,
+			'grant_view' => 1,
+			'grant_update' => 0,
+			'grant_delete' => 0,
+			'priority' => 1,
+		);
+	}
+	return $grants;
+}
+
+/**
+ * Load all coordinators for an Eaton Location code
+ **/
+function _eaton_backbone_coordinators($location_code = '') {
+	$roles = array('administrator', 'event coordinator');
+	$query = db_select('users_roles', 'ur');
+	$query->join('users', 'u', 'u.uid = ur.uid');
+	$query->join('role', 'r', 'r.rid = ur.rid');
+	$query->fields('u', array('uid'));
+	$query->condition('r.name', $roles, 'IN');
+	$result = $query->execute()->fetchCol();
+	if ($result) {
+		$users = user_load_multiple($result);
+		if ($location_code != '') {
+			$filtered = array();
+			foreach ($users as &$user) {
+				$user_wrapper = entity_metadata_wrapper('user', $user);
+				$location = $user_wrapper->field_eaton_location->value();
+				if ($location == $location_code) {
+					$filtered[$user->uid] = $user;
+				}
+			}
+			return $filtered;
+		}
+		return $users;
+	}
+	return false;
+}
+
+/**
+ * Grab all accepted suggestions on a node
+ **/
+function _eaton_backbone_fetch_denied_event_suggested_accepted_record($node) {
+	$query = db_select('eaton_backbone_accepted_suggestions', 'a')
+		->fields('a')
+		->condition('event_id', $node->nid);
+	$result = $query->execute()->fetchObject();
+	return $result;
+}
+
+/**
+ * Return true or false if the accepted date was suggested
+ **/
+function _eaton_backbone_denied_event_suggested_date_accepted($node) {
+	$record = _eaton_backbone_fetch_denied_event_suggested_accepted_record($node);
+	if ($record) {
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Implements hook_node_load().
+ **/
+function eaton_backbone_node_load($nodes, $types) {
+	if (count(array_intersect(array('event_request'), $types))) {
+		$nids = array();
+		foreach ($nodes as $nid => $node) {
+			if ($node->type == 'event_request') {
+				$nids[] = $nid;
+			}
+		}
+		$query = db_select('eaton_backbone_accepted_suggestions', 'a')
+			->fields('a')
+			->condition('event_id', $nids);
+		$result = $query->execute()->fetchAllAssoc('event_id');
+		foreach ($result as $nid => $record) {
+			$record->date = unserialize($record->date);
+			$nodes[$nid]->suggested_date_accepted = (array) $record;
+		}
+
+		$site_tz = new DateTimeZone(date_default_timezone_get());
+		$now = new DateTime("now", $site_tz);
+		$site_offset = $site_tz->getOffset($now);
+
+		foreach ($nodes as $nid => $node) {
+			if ($node->type == 'event_request') {
+				$wrapper = entity_metadata_wrapper('node', $node);
+				$location = $wrapper->field_event_location->value();
+				$timezone = eaton_backbone_timezone_for_location($location);
+				$possible_dates = $wrapper->field_possible_dates->value();
+
+				$tz = new DateTimeZone($timezone);
+				$offset = $tz->getOffset($now);
+
+				$real_offset = $site_offset - $offset;
+
+				foreach ($possible_dates as &$date) {
+					$date['timezone'] = $tz;
+					$start_timestamp = strtotime($date['value']) + $real_offset;
+					$end_timestamp = strtotime($date['value2']) + $real_offset;
+					$date['value_formatted'] = format_date($start_timestamp, 'medium', '', $timezone);
+					$date['value2_formatted'] = format_date($end_timestamp, 'medium', '', $timezone);
+				}
+				$node->field_possible_dates[LANGUAGE_NONE] = $possible_dates;
+
+				$approved_date = $wrapper->field_approved_date->value();
+				if (!is_null($approved_date)) {
+					$start_timestamp = strtotime($approved_date['value']) + $real_offset;
+					$end_timestamp = strtotime($approved_date['value2']) + $real_offset;
+					$approved_date['value_formatted'] = format_date($start_timestamp, 'medium', '', $timezone);
+					$approved_date['value2_formatted'] = format_date($end_timestamp, 'medium', '', $timezone);
+					$node->field_approved_date[LANGUAGE_NONE][0] = $approved_date;
+				}
+
+				$denied_suggested_date = $wrapper->field_denied_suggested_date->value();
+				if (!is_null($denied_suggested_date)) {
+					$start_timestamp = strtotime($denied_suggested_date['value']) + $real_offset;
+					$end_timestamp = strtotime($denied_suggested_date['value2']) + $real_offset;
+					$denied_suggested_date['value_formatted'] = format_date($start_timestamp, 'medium', '', $timezone);
+					$denied_suggested_date['value2_formatted'] = format_date($end_timestamp, 'medium', '', $timezone);
+					$node->field_denied_suggested_date[LANGUAGE_NONE][0] = $denied_suggested_date;
+				}
+
+				$denied_on_date = $wrapper->field_denied_on_date->value();
+				if (!is_null($denied_on_date)) {
+					// $wrapper->value() is returning only timestamp for this field, so use the full field data instead
+					$denied_on_date = $node->field_denied_on_date[LANGUAGE_NONE][0];
+					$start_timestamp = strtotime($denied_on_date['value']) + $real_offset;
+					$denied_on_date['value_formatted'] = format_date($start_timestamp, 'medium', '', $timezone);
+					$node->field_denied_on_date[LANGUAGE_NONE][0] = $denied_on_date;
+				}
+
+				if (isset($node->suggested_date_accepted) && !empty($node->suggested_date_accepted)) {
+					$accepted_ts = $node->suggested_date_accepted['timestamp'];
+					$node->suggested_date_accepted['timestamp_formatted'] = format_date($accepted_ts, 'medium', '', $timezone);
+				}
+
+				$node->created_local = format_date($node->created, 'medium', '', $timezone);
+				$node->changed_local = format_date($node->changed, 'medium', '', $timezone);
+			}
+		}
+	}
+}
+
+/**
+ * Implements hook_block_info().
+ **/
+function eaton_backbone_block_info() {
+	$blocks = array();
+	$blocks['eaton_backbone_suggestion_info'] = array(
+		'info' => t('Denied Date Suggestion Accepted Block'),
+	);
+	$blocks['eaton_backbone_admin_dashboard'] = array(
+		'info' => t('Eaton Admin Dashboard'),
+	);
+	return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ **/
+function eaton_backbone_block_view($delta = '') {
+	$destination = drupal_get_destination();
+
+	$block = array();
+	switch ($delta) {
+	case 'eaton_backbone_suggestion_info':
+		if (arg(0) == 'node') {
+			$node = node_load(arg(1));
+			if (_eaton_backbone_event_is_denied($node) && isset($node->suggested_date_accepted)) {
+				$block['subject'] = 'Suggested Date was Accepted';
+				$timestamp = $node->suggested_date_accepted['timestamp'];
+				$ts = date('D, Y-n-j g:i A T', $timestamp);
+				$block['content'] = t('<strong>Suggested Date was accepted</strong> on @ts', array('@ts' => $ts));
+			}
+		}
+		break;
+	case 'eaton_backbone_admin_dashboard':
+		if (user_access('administer eaton locations')) {
+			$links = array(
+				'manage_eaton_locations' => array(
+					'title' => 'Manage locations',
+					'href' => 'admin/config/eaton/locations',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+				'add_new_eaton_location' => array(
+					'title' => 'Add new location',
+					'href' => 'admin/config/eaton/locations/add',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+				'default_badging' => array(
+					'title' => 'Configure badging default media',
+					'href' => 'admin/config/eaton/locations/badging',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+				'regional_settings' => array(
+					'title' => 'Edit available timezones',
+					'href' => 'admin/config/eaton/locations/settings',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+			);
+			$block['content'][] = array('#theme' => 'links', '#links' => $links, '#attributes' => array(), '#heading' => 'Eaton Locations');
+		}
+
+		$include_eaton = false;
+		if (user_access('administer eaton email templates')) {
+			$include_eaton = true;
+			$links = array(
+				'email_templates' => array(
+					'title' => 'Edit email templates',
+					'href' => 'admin/config/eaton/email_templates',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+			);
+		}
+		if (user_access('administer eaton eloqua connector')) {
+			$include_eaton = true;
+			$links['eaton_eloqua'] = array(
+				'title' => 'Configure Eaton-Eloqua connector',
+				'href' => 'admin/config/eaton/eloqua',
+				'query' => array(
+					'destination' => $destination['destination'],
+				),
+			);
+		}
+		if ($include_eaton) {
+			$block['content'][] = array('#theme' => 'links', '#links' => $links, '#attributes' => array(), '#heading' => 'Email Templates');
+		}
+
+		if (user_access('administer site configuration')) {
+			$links = array(
+				'modify_datetime_format' => array(
+					'title' => 'Change date/time display format',
+					'href' => 'admin/config/regional/date-time/formats/38/edit',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+				'change_site_info' => array(
+					'title' => 'Change site name and email',
+					'href' => 'admin/config/system/site-information',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+				'change_timepicker_settings' => array(
+					'title' => 'Change timepicker settings',
+					'href' => 'admin/config/jp_timepicker/settings',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+			);
+			$block['content'][] = array('#theme' => 'links', '#links' => $links, '#attributes' => array(), '#heading' => 'System');
+		}
+
+		$links = array(
+			'add_new_event_request' => array(
+				'title' => 'Request new event',
+				'href' => 'request-event',
+				'query' => array(
+					'destination' => $destination['destination'],
+				),
+			),
+			'manage_event_requests' => array(
+				'title' => 'Manage requests',
+				'href' => 'requests',
+				'query' => array(
+					'destination' => $destination['destination'],
+				),
+			),
+			'todays_events' => array(
+				'title' => 'Today\'s events',
+				'href' => 'today',
+				'query' => array(
+					'destination' => $destination['destination'],
+				),
+			),
+			'see_approved_events' => array(
+				'title' => 'See approved events',
+				'href' => 'events',
+				'query' => array(
+					'destination' => $destination['destination'],
+				),
+			),
+		);
+		$block['content'][] = array('#theme' => 'links', '#links' => $links, '#attributes' => array(), '#heading' => 'Event Requests');
+
+		if (user_access('view attendee table') || user_access('edit attendees')) {
+			$links = array(
+				'manage_master_attendee_list' => array(
+					'title' => 'View all attendees',
+					'href' => 'admin/structure/attendees',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+			);
+			$block['content'][] = array('#theme' => 'links', '#links' => $links, '#attributes' => array(), '#heading' => 'Attendees');
+		}
+
+		if (user_access('view site reports')) {
+			$links = array(
+				'goto_eaton_reports_single' => array(
+					'title' => 'Eaton Reporting - Single',
+					'href' => 'admin/reports/eaton_reports',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+				'goto_eaton_reports_bulk' => array(
+					'title' => 'Eaton Reporting - Bulk',
+					'href' => 'admin/reports/eaton_reports/bulk',
+					'query' => array(
+						'destination' => $destination['destination'],
+					),
+				),
+			);
+			$block['content'][] = array('#theme' => 'links', '#links' => $links, '#attributes' => array(), '#heading' => 'Reporting');
+		}
+		break;
+	}
+	return $block;
+}
+
+/**
+ * Tokens
+ *
+ * Utilizing Token API
+ **/
+function eaton_backbone_token_info() {
+	$info['tokens']['user']['events-list-page'] = array(
+		'name' => t('Events List Page'),
+		'description' => t('Events List page'),
+	);
+	$info['tokens']['user']['request-event-page'] = array(
+		'name' => t('Events Request Page'),
+		'description' => t('Events Request page'),
+	);
+	$info['tokens']['user']['contact-page'] = array(
+		'name' => t('Contact Page'),
+		'description' => t('Contact Page'),
+	);
+	return $info;
+}
+
+/**
+ * Implements hook_tokens().
+ */
+function eaton_backbone_tokens($type, $tokens, array $data = array(), array $options = array()) {
+	$replacements = array();
+	if ($type == 'user') {
+		foreach ($tokens as $name => $original) {
+			switch ($name) {
+			case 'events-list-page':
+				$replacements[$original] = l('Events', 'events');
+				break;
+			case 'request-event-page':
+				$replacements[$original] = l('Request Event', 'request-event');
+				break;
+			case 'contact-page':
+				$replacements[$original] = l('Contact', 'contact');
+				break;
+			}
+		}
+	}
+	return $replacements;
+}
+
+/**
+ * Badging
+ **/
+
+/**
+ * Implements hook_cron().
+ */
+function eaton_backbone_cron() {
+
+	// Cron queues
+	$queue_front = DrupalQueue::get('build_event_badges_front');
+	$queue_back = DrupalQueue::get('build_event_badges_back');
+	$expire_queue = DrupalQueue::get('expire_events');
+	$eloqua_queue = DrupalQueue::get('eloqua_update');
+	$checkout_queue = DrupalQueue::get('checkout_queue');
+
+	// Account for already queued items.
+	$items = db_select('queue', 'q')->fields('q', array('data'))->condition('name', 'build_event_badges_front')->execute()->fetchCol();
+	foreach ($items as &$item) {
+		$item = unserialize($item);
+	}
+	$items_back = db_select('queue', 'q')->fields('q', array('data'))->condition('name', 'build_event_badges_back')->execute()->fetchCol();
+	foreach ($items_back as &$item) {
+		$item = unserialize($item);
+	}
+
+	$queue_items = array_merge($items, $items_back);
+
+	// Delete items from the queue that have badge files made within 6 hours.
+	// Ultimate Cron is failing to remove them from the queue due to issues with PHP headers and
+	// ob_start and ob_end_clean
+	while ($item = $queue_front->claimItem(3600)) {
+		$node = node_load($item->data);
+		if ($node) {
+			$queue_items[] = $node->nid;
+			if ($file = _eaton_backbone_stored_event_badges($node, 'front')) {
+				if ((time() - $file->timestamp) < 21600) {
+					$queue_front->deleteItem($item);
+				}
+			}
+		}
+	}
+	while ($item = $queue_back->claimItem(3600)) {
+		$node = node_load($item->data);
+		if ($node) {
+			$queue_items[] = $node->nid;
+			if ($file = _eaton_backbone_stored_event_badges($node, 'back')) {
+				if ((time() - $file->timestamp) < 21600) {
+					$queue_back->deleteItem($item);
+				}
+			}
+		}
+	}
+	$events = _eaton_backbone_events(array('request_status' => 'approved'));
+	if ($events) {
+		foreach ($events as $node) {
+			// Check if expired
+			if (eaton_backbone_event_is_expired($node)) {
+				$wrapper = entity_metadata_wrapper('node', $node);
+				if ($wrapper->field_event_visibility->value() != 'private') {
+					$expire_queue->createItem($node->nid);
+				}
+			}
+
+			if (eaton_backbone_event_is_active($node) && date('H') >= 19) {
+				$checkout_queue->createItem($node->nid);
+			}
+
+			if (!in_array($node->nid, $queue_items)) {
+				// Make sure event has attendees
+				$attendees = _attendeeresource_event_attendees($node->nid);
+				if (!empty($attendees)) {
+					foreach (array('front', 'back') as $side) {
+						$replace = false;
+						$file = _eaton_backbone_stored_event_badges(node_load($node->nid), $side);
+						if ($file) {
+							// Check if file is older than 24 hours
+							if ((time() - $file->timestamp) > 86400) {
+								$replace = true;
+							}
+						} else {
+							// File doesn't exist.. make!
+							$replace = true;
+						}
+						if ($replace) {
+							switch ($side) {
+							case 'front':
+								$queue_front->createItem($node->nid);
+								break;
+							case 'back':
+								$queue_back->createItem($node->nid);
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	$records = db_select('eaton_backbone_eloqua', 'eq')->fields('eq')->condition('completed', 0)->execute()->fetchAllAssoc('id');
+	foreach ($records as $record) {
+		$eloqua_queue->createItem($record);
+	}
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ **/
+function eaton_backbone_cron_queue_info() {
+	return array(
+		'build_event_badges_front' => array(
+			'worker callback' => 'eaton_backbone_build_event_badges_front',
+			'time' => 60,
+		),
+		'build_event_badges_back' => array(
+			'worker callback' => 'eaton_backbone_build_event_badges_back',
+			'time' => 60,
+		),
+		'expire_events' => array(
+			'worker callback' => 'eaton_backbone_expire_event',
+			'time' => 60,
+		),
+		'eloqua_update' => array(
+			'worker callback' => 'eaton_eloqua_update_remote',
+			'time' => 60,
+		),
+		'checkout_queue' => array(
+			'worker callback' => '_eventresource_check_out_all_attendees',
+			'time' => 60
+		)
+	);
+}
+
+function _eaton_backbone_stored_event_badges($node, $side = 'front') {
+	$uri = _eaton_backbone_event_badges_uri($node, $side);
+	$fid = db_select('file_managed', 'f')->fields('f', array('fid'))->condition('uri', $uri)->execute()->fetchField();
+	if ($fid) {
+		return file_load($fid);
+	}
+	return false;
+}
+
+function eaton_backbone_build_event_badges($nid, $return_file = false) {
+	$node = node_load($nid);
+	$pdf_files = array();
+	foreach (array('front', 'back') as $side) {
+		// Get multi badge markup
+		$html = eaton_backbone_deliver_event_badges($node, false, true, $side);
+		// Create new PDF
+		$pdf = new HTML2PDF('P', array(86, 54), 'en', true, 'UTF-8', array(0, 0, 0, 0));
+
+		$pdf->WriteHTML($html);
+
+		$pdf_contents = $pdf->Output('', 'S');
+		$fileURI = _eaton_backbone_event_badges_uri($node, $side);
+
+		if ($pdf_file = eaton_backbone_save_pdf($fileURI, $pdf_contents, $side, $node->nid)) {
+			$pdf_files[] = $pdf_file;
+		}
+	}
+	if ($return_file) {
+		if (!empty($pdf_files)) {
+			return $pdf_files;
+		}
+		return $pdf_file;
+	}
+}
+
+function eaton_backbone_build_event_badges_front($nid, $return_file = false) {
+	$node = node_load($nid);
+	$pdf_files = array();
+	$side = 'front';
+	// Get multi badge markup
+	$html = eaton_backbone_deliver_event_badges($node, false, true, $side);
+	// Create new PDF
+	$pdf = new HTML2PDF('P', array(86, 54), 'en', true, 'UTF-8', array(0, 0, 0, 0));
+
+	$pdf->WriteHTML($html);
+
+	$pdf_contents = $pdf->Output('', 'S');
+	$fileURI = _eaton_backbone_event_badges_uri($node, $side);
+
+	if ($pdf_file = eaton_backbone_save_pdf($fileURI, $pdf_contents, $side, $node->nid)) {
+		$pdf_files[] = $pdf_file;
+	}
+	if ($return_file) {
+		if (!empty($pdf_files)) {
+			return $pdf_files;
+		}
+		return $pdf_file;
+	}
+}
+
+function eaton_backbone_build_event_badges_back($nid, $return_file = false) {
+	$node = node_load($nid);
+	$pdf_files = array();
+	$side = 'back';
+	// Get multi badge markup
+	$html = eaton_backbone_deliver_event_badges($node, false, true, $side);
+	// Create new PDF
+	$pdf = new HTML2PDF('P', array(86, 54), 'en', true, 'UTF-8', array(0, 0, 0, 0));
+
+	$pdf->WriteHTML($html);
+
+	$pdf_contents = $pdf->Output('', 'S');
+	$fileURI = _eaton_backbone_event_badges_uri($node, $side);
+
+	if ($pdf_file = eaton_backbone_save_pdf($fileURI, $pdf_contents, $side, $node->nid)) {
+		$pdf_files[] = $pdf_file;
+	}
+	if ($return_file) {
+		if (!empty($pdf_files)) {
+			return $pdf_files;
+		}
+		return $pdf_file;
+	}
+}
+
+function eaton_backbone_save_pdf($fileURI, $pdf_contents, $side, $nid) {
+	$pdf_file = file_save_data($pdf_contents, $fileURI, FILE_EXISTS_REPLACE);
+	if ($pdf_file) {
+		file_usage_add($pdf_file, 'eaton_backbone', 'node', $nid);
+		watchdog(__FUNCTION__, 'Created multi-badge PDF (' . $side . ') for event ' . $nid . ' successfully.  Stored as fid ' . $pdf_file->fid, null, WATCHDOG_INFO);
+		return $pdf_file;
+	} else {
+		watchdog(__FUNCTION__, 'Error when saving pdf file to uri ' . $fileURI);
+	}
+	return false;
+}
+
+function _eaton_backbone_event_badges_directory() {
+	return 'public://badges/events';
+}
+
+function _eaton_backbone_event_badges_uri($node, $side = 'front') {
+	$directory = _eaton_backbone_event_badges_directory();
+	$sideDir = $directory . '/' . $side;
+	file_prepare_directory($sideDir, FILE_CREATE_DIRECTORY);
+	return $sideDir . '/event-' . $node->nid . '-badges.pdf';
+}
+
+function eaton_backbone_clear_cached_badges() {
+	$events = _eaton_backbone_events(array('request_status' => 'approved'));
+	if ($events) {
+		foreach ($events as $node) {
+			// Make sure event has attendees
+			$attendees = _attendeeresource_event_attendees($node->nid);
+			if (!empty($attendees)) {
+				foreach (array('front', 'back') as $side) {
+					$file = _eaton_backbone_stored_event_badges($node, $side);
+					if ($file) {
+						file_delete($file, true);
+					}
+				}
+			}
+		}
+	}
+}
+/**
+ * Implements hook_date_combo_process_alter().
+ */
+function eaton_backbone_date_combo_process_alter(&$element, &$form_state, $context) {
+	if ($element['#entity_type'] == 'node' && $element['#bundle'] == 'event_request') {
+		if (isset($element['value'])) {
+			$element['value']['#datepicker_options'] = array('minDate' => 0);
+		}
+		if (isset($element['value2'])) {
+			$element['value2']['#datepicker_options'] = array('minDate' => 0);
+		}
+	}
+}
+
+function eaton_backbone_event_is_expired($node) {
+	$wrapper = entity_metadata_wrapper('node', $node);
+	$approved_date = $wrapper->field_approved_date->value();
+	if ($approved_date) {
+		$end_date = strtotime($approved_date['value2']);
+		if (time() > $end_date) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function eaton_backbone_event_is_active($node) {
+	$wrapper = entity_metadata_wrapper('node', $node);
+	$approved_date = $wrapper->field_possible_dates[0]->value();
+	if ($approved_date) {
+		$start_date = strtotime($approved_date['value']);
+		$end_date = strtotime($approved_date['value2']);
+		if (time() < $end_date && time() > $start_date) {
+			return true;
+		}
+	}
+	return false;
+}
+
+function eaton_backbone_expire_event($nid) {
+	$node = node_load($nid);
+	$wrapper = entity_metadata_wrapper('node', $node);
+	$wrapper->field_event_visibility = 'private';
+	$wrapper->save();
+}
+
+function eaton_backbone_get_event_date_approved_on($node) {
+	$stored = variable_get('eaton_backbone_event_' . $node->nid . '_date_approved_on', '');
+	$date = (empty($stored) ? $node->changed : $stored);
+	return format_date($date, 'medium');
+}
+
+function eaton_backbone_user_event_access($nid, $uid) {
+	$node = node_load($nid);
+	if ($node && $node->type == 'event_request') {
+		$wrapper = entity_metadata_wrapper('node', $node);
+		$event_visibility = $wrapper->field_event_visibility->value();
+		if ($event_visibility == 'public') {
+			return true;
+		} elseif ($event_visibility == 'private') {
+			// determine if user has access
+			$user = user_load($uid);
+			if (in_array_or(array('administrator', 'subadministrator', 'event coordinator'), $user->roles)) {
+				return true;
+			} elseif (in_array('event initiator', $user->roles)) {
+				// if user is initiator, check if this is their event
+				return $node->uid === $user->uid;
+			}
+		}
+	}
+	return false;
+}
+
+function in_array_or($needles, $haystack) {
+	foreach ($needles as $needle) {
+		if (in_array($needle, $haystack) !== false) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
+ * Get the next event
+ */
+function eaton_backbone_next_event($location_code = '') {
+	global $user;
+	$today_date = date('Y-m-d');
+	$today_time = strtotime($today_date);
+	$today = date('Y-m-d\TH:i:s', $today_time);
+	$query = new EntityFieldQuery();
+	$query->entityCondition('entity_type', 'node')
+		->entityCondition('bundle', 'event_request')
+		->propertyCondition('status', 1)
+		->fieldCondition('field_request_status', 'value', 'approved')
+		->fieldCondition('field_approved_date', 'value', $today, '>=')
+		->fieldOrderBy('field_approved_date', 'value', 'ASC');
+	if ($location_code != '') {
+		$query->fieldCondition('field_event_location', 'value', $location_code);
+	}
+	$result = $query->execute();
+	if (!empty($result)) {
+		foreach ($result['node'] as $nid => $node_info) {
+			if (eaton_backbone_user_event_access($nid, $user->uid)) {
+				return node_load($nid);
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * Cached timezone ID list
+ */
+function eaton_backbone_timezone_identifiers_list() {
+	static $list;
+	if (empty($list)) {
+		$list = system_time_zones();
+	}
+	return $list;
+}
+
+/**
+ * Returns list of timezones that have been enabled
+ */
+function eaton_backbone_timezone_enabled_identifiers_list() {
+	$list = variable_get('eaton_backbone_eaton_locations_timezones');
+	$timezones = eaton_backbone_timezone_identifiers_list();
+	$options = array();
+	foreach ($list as $timezone) {
+		if ($timezones[$timezone]) {
+			$options[$timezone] = eaton_backbone_timezone_system_description($timezone);
+		}
+	}
+	return $options;
+}
+
+/**
+ * Returns a timezone for a location code
+ */
+function eaton_backbone_timezone_for_location($location_code) {
+	$location = eaton_backbone_eaton_location_by_code($location_code);
+	return $location->timezone;
+}
+
+/**
+ * Returns string description of timezone based on its PHP ID
+ */
+function eaton_backbone_timezone_system_description($timezone_code) {
+	$utc_tz = new DateTimeZone('UTC');
+	$now_utc = new DateTime("now", $utc_tz);
+	$tz = new DateTimeZone($timezone_code);
+	$now_tz = new DateTime("now", $tz);
+	$offset = round($tz->getOffset($now_utc) / 3600, 3) * 100;
+
+	if (strlen($offset) == 4 && substr($offset, 0, 1) == '-') {
+		$offset = '-0' . substr($offset, 1, strlen($offset));
+	} elseif (strlen($offset) == 3 && substr($offset, 0, 1) != '-') {
+		$offset = '+0' . $offset;
+	} elseif (strlen($offset) > 3 && substr($offset, 0, 1) != '-') {
+		$offset = '+' . $offset;
+	} elseif ($offset == 0) {
+		$offset = '+0000';
+	}
+	$name = $tz->getName();
+	switch ($offset) {
+	case "-0400":
+		if ($now_tz->format('I') == 1) {
+			$name = $name . ' (EDT)';
+		} else {
+			$name = $name . ' (EST)';
+		}
+		break;
+	case "-0500":
+		if ($now_tz->format('I') == 1) {
+			$name = $name . ' (CDT)';
+		} else {
+			$name = $name . ' (CST)';
+		}
+		break;
+	case "-0600":
+		if ($now_tz->format('I') == 1) {
+			$name = $name . ' (MDT)';
+		} else {
+			$name = $name . ' (MST)';
+		}
+		break;
+	case "-0700":
+		if ($now_tz->format('I') == 1) {
+			$name = $name . ' (PDT)';
+		} else {
+			$name = $name . ' (PST)';
+		}
+		break;
+	}
+	return t('@name (@offset GMT)', array('@name' => $name, '@offset' => $offset));
+}
+
+/**
+ * Implements hook_field_attach_view_alter().
+ */
+function eaton_backbone_field_attach_view_alter(&$output, $context) {
+	if ($context['entity_type'] == 'node') {
+		$field_names = array('field_possible_dates', 'field_approved_date', 'field_denied_suggested_date');
+		foreach (element_children($output) as $field_name) {
+			$element = &$output[$field_name];
+			if (in_array($field_name, $field_names)) {
+				$node = $context['entity'];
+				$wrapper = entity_metadata_wrapper('node', $node);
+				$location = $wrapper->field_event_location->value();
+				$timezone = eaton_backbone_timezone_for_location($location);
+				$tz = new DateTimeZone($timezone);
+				$site_tz = new DateTimeZone(date_default_timezone_get());
+				$now = new DateTime("now", $site_tz);
+				$site_offset = $site_tz->getOffset($now);
+				$offset = $tz->getOffset($now);
+				$real_offset = $site_offset - $offset;
+
+				$items = $element['#items'];
+				if (is_array($context['display']) && is_array($context['display']['settings'])) {
+					$date_format = $context['display']['settings']['format_type'];
+
+					foreach ($items as $delta => $item) {
+						$start_timestamp = strtotime($item['value']) + $real_offset;
+						$end_timestamp = strtotime($item['value2']) + $real_offset;
+						$element[$delta] = format_date($start_timestamp, $date_format, '', $timezone) . ' to ' . format_date($end_timestamp, $date_format, '', $timezone);
+					}
+				}
+			}
+		}
+	}
+}
+
+/**
+ * Implements hook_element_info_alter().
+ */
+function eaton_backbone_element_info_alter(&$type) {
+	// if (isset($type['date_popup'])) {
+	//   array_unshift(
+	//     $type['date_popup']['#process'],
+	//     '_process_date_popup_helper'
+	//   );
+	// }
+}
+
+function _process_date_popup_helper($element, &$form_state, $form) {
+	$element['#datepicker_options']['showButtonPanel'] = true;
+	return $element;
+}
+
+/**
+ * Deliver Excel Template from Attendeeresource-Attendees table
+ */
+function eaton_backbone_export_excel_template() {
+	// Find stored file in file_managed table
+	$fid = db_select('file_managed', 'f')
+		->fields('f', array('fid'))
+		->condition('filename', 'attendees-template.xlsx')
+		->execute()
+		->fetchField();
+	if ($fid) {
+		$file = file_load($fid);
+		// if its less than 24 hours old, use this file
+		if ($file->timestamp >= (time() - (24 * 60 * 60))) {
+			return $file;
+		} else {
+			file_delete($file);
+		}
+	}
+
+	// Load PHPExcel Library
+	$library = libraries_load('PHPExcel');
+
+	// Load table fields
+	$template = _attendeeresource_generate_template_from_schema('attendeeresource_attendees');
+
+	// Make new document
+	$objPHPExcel = new PHPExcel();
+	$objPHPExcel->getProperties()
+		->setCreator(variable_get('site_name'))
+		->setTitle("Eaton Visitor Tracking Attendees Template")
+		->setSubject("Eaton Visitor Tracking Attendees Template");
+
+	// Used in array_map
+	function transpose($value) {
+		return array($value);
+	}
+
+	$row = 1;
+	$column = 'A';
+	$dropdown_defs = array(
+		'Job Function' => '_eaton_backbone_visitor_types',
+		'Industry' => '_eaton_backbone_market_focus',
+		'state' => '_country_taxonomy_state_options',
+		'country' => '_country_taxonomy_country_options',
+	);
+	$dropdowns = array();
+	$example = array();
+
+	// Iterate through template fields to find dropdowns, get their data, and write out header row
+	foreach ($template as $key) {
+		if (in_array($key, array_keys($dropdown_defs))) {
+			$dropdowns[$column] = array('key' => $key, 'rangeKey' => str_replace(' ', '', $key), 'range' => call_user_func($dropdown_defs[$key]));
+		}
+		$example[] = 'Example ' . ucwords(str_replace('_', ' ', $key));
+		$objPHPExcel->getActiveSheet()->setCellValue($column . $row, $key);
+		$objPHPExcel->getActiveSheet()->getColumnDimension($column)->setWidth(12);
+		++$column;
+	}
+
+	// Process the dropdowns
+	$dropdown_data_source_start_column = $column;
+	++$dropdown_data_source_start_column;
+
+	foreach ($dropdowns as $column => $dropdown) {
+		if ($dropdown['range']) {
+			$range = $dropdown['range'];
+			// delete any empty option
+			reset($range);
+			if (key($range) == -1 || key($range) == '') {
+				array_shift($range);
+			}
+			// Transpose from a row to a column array
+			$range = array_map('transpose', $range);
+
+			// Load array into column
+			$objPHPExcel->getActiveSheet()
+				->fromArray($range, null, $dropdown_data_source_start_column . 1);
+
+			// Add named range
+			$objPHPExcel->addNamedRange(
+				new PHPExcel_NamedRange(
+					$dropdown['rangeKey'],
+					$objPHPExcel->getActiveSheet(),
+					$dropdown_data_source_start_column . '1:' . $dropdown_data_source_start_column . count($range)
+				)
+			);
+			// Set column width of the input column
+			$objPHPExcel->getActiveSheet()->getColumnDimension($column)->setWidth(15);
+
+			// Hide datasource columns
+			$objPHPExcel->getActiveSheet()
+				->getColumnDimension($dropdown_data_source_start_column)
+				->setVisible(false);
+			++$dropdown_data_source_start_column;
+		}
+	}
+
+	// Process the data
+	$data = array($example);
+	$row = 2;
+	foreach ($data as $datum) {
+		$column = 'A';
+		foreach ($datum as $key => $val) {
+			// If this column has a dropdown, bind it
+			if (array_key_exists($column, $dropdowns)) {
+				$bind_row = 2;
+				$dropdown = $dropdowns[$column];
+				// Bind to the first 100 rows in this column
+				while ($bind_row <= 100) {
+					// Set linked validators
+					$objValidation = $objPHPExcel->getActiveSheet()
+						->getCell($column . $bind_row)
+						->getDataValidation();
+					$objValidation->setType(PHPExcel_Cell_DataValidation::TYPE_LIST)
+						->setErrorStyle(PHPExcel_Cell_DataValidation::STYLE_INFORMATION)
+						->setAllowBlank(false)
+						->setShowInputMessage(true)
+						->setShowErrorMessage(true)
+						->setShowDropDown(true)
+						->setErrorTitle('Input error')
+						->setError($dropdown['key'] . ' is not in the list.')
+						->setPromptTitle('Pick from the list')
+						->setPrompt('Please pick a ' . $dropdown['key'] . ' from the drop-down list.')
+						->setFormula1('=' . $dropdown['rangeKey']);
+					$bind_row++;
+				}
+			} else {
+				//$objPHPExcel->getActiveSheet()->setCellValue($column . $row, $val);
+			}
+			++$column;
+		}
+		++$row;
+	}
+
+	// Set main sheet as primary
+	$objPHPExcel->setActiveSheetIndex(0);
+
+	// Save Excel 2007 file
+	$objWriter = PHPExcel_IOFactory::createWriter($objPHPExcel, 'Excel2007');
+	$path = drupal_realpath('public://attendees.xlsx');
+	$objWriter->save($path);
+
+	// Save to Drupal File System
+	$file = file_save_data(file_get_contents($path), 'public://attendees-template.xlsx', FILE_EXISTS_REPLACE);
+	return $file;
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ *
+ * Add approval options to node types.
+ */
+function eaton_backbone_form_node_type_form_alter(&$form, $form_state) {
+	$type = $form['#node_type']->type;
+	if ($type === 'event_request') {
+		$form['workflow']['eaton_backbone_event_approval'] = [
+			'#type' => 'checkbox',
+			'#title' => t('Events require approval'),
+			'#description' => t('If checked, events will not be published until approved by an event coordinator.'),
+			'#default_value' => variable_get('eaton_backbone_event_approval_' . $type),
+		];
+	}
+}

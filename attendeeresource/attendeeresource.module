@@ -1,0 +1,1142 @@
+<?php
+/**
+ * This module creates a resource using Services API, 
+ * 2 tables using Schema API, and various CRUD functions
+ * 
+ * Requires parent module, eaton_backbone.
+ */
+
+define('ATTENDEERESOURCE_SECURITY_TOKEN', 'XTCQRxH6Vka99b4WjWb7');
+
+/**
+ * Implements hook_menu().
+ */
+function attendeeresource_menu() {
+  $items = array();
+  $items['admin/structure/attendees'] = array(
+    'title' => 'Attendees',
+    'description' => t('Manage attendees'),
+    'access arguments' => array('view attendee table'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('attendeeresource_admin_attendees'),
+    'file' => 'attendeeresource.admin.inc',
+  );  
+  $items['admin/structure/attendees/edit/%attendeeresource_attendee'] = array(
+    'title callback' => 'attendeeresource_edit_form_title',
+    'title arguments' => array(4),
+    'description' => t('Edit attendee'),
+    'access arguments' => array('edit attendees'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('attendeeresource_edit_form', 4),
+    'load arguments' => array(4),
+    'file' => 'attendeeresource.admin.inc',
+  );  
+  $items['admin/structure/attendees/delete/%attendeeresource_attendee'] = array(
+    'title callback' => 'attendeeresource_delete_form_title',
+    'title arguments' => array(4),
+    'description' => t('Delete attendee'),
+    'access arguments' => array('edit attendees'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('attendeeresource_delete_form', 4),
+    'load arguments' => array(4),
+    'file' => 'attendeeresource.admin.inc',
+  );    
+  return $items;
+}
+
+function attendeeresource_edit_form_title($attendee) {
+  return t('Edit Attendee @name', array('@name' => $attendee->first_name . ' ' . $attendee->last_name));
+}
+
+function attendeeresource_delete_form_title($attendee) {
+  $attendee_full_name = $attendee->first_name . ' ' . $attendee->last_name;
+  return t('Are you sure you want to delete Attendee @name (@email)?', array('@name' => $attendee_full_name, '@email' => $attendee->email));
+}
+
+/**
+ * Implements hook_theme().
+ */
+
+function attendeeresource_theme() {
+  return array(
+    'attendeeresource_file_managed_file_shadowbox' => array(
+      'render element' => 'element'
+    ),
+  );
+}
+
+
+/**
+ * Tweaked copy of theme_file_managed_file
+ */
+function theme_attendeeresource_file_managed_file_shadowbox($variables) {
+  $element = $variables['element'];
+
+  $attributes = array();
+  if (isset($element['#id'])) {
+    $attributes['id'] = $element['#id'];
+  }
+  if (!empty($element['#attributes']['class'])) {
+    $attributes['class'] = (array) $element['#attributes']['class'];
+  }
+  $attributes['class'][] = 'form-managed-file';
+
+  // Replace link with shadowbox link
+  if (isset($element['filename'])) {
+    $preview_markup = $element['filename']['#markup'];
+    $element['filename']['#markup'] = str_replace('target="_blank"', '', str_replace('<a href=', '<a rel="shadowbox" href=', $preview_markup));
+  }
+  
+  // This wrapper is required to apply JS behaviors and CSS styling.
+  $output = '';
+  $output .= '<div' . drupal_attributes($attributes) . '>';
+  $output .= drupal_render_children($element);
+  $output .= '</div>';
+  return $output;
+}
+
+/**
+ * Implementation of hook_help().
+ */
+function attendeeresource_help($path, $arg) {
+  switch ($path) {
+    case 'admin/structure/attendees':
+      return '<p>'. t('The Attendees module stores information on Attendees and ties them to various event_request nodes.  All attendees currently in the database can be seen below.') .'</p>';
+  }
+}
+
+/**
+ * Implements hook_perm().
+ */
+function attendeeresource_permission() {
+    return array(
+      'administer attendeeresource' => array(
+        'title' => t('Administer Attendeeresource'),
+        'description' => t('Adminster attendeeresource'),
+      ),
+      'view attendee table' => array(
+        'title' => t('View Attendee Table'),
+        'description' => t('View master list of all attendees'),
+      ),
+      'edit attendees' => array(
+        'title' => t('Edit Attendees'),
+        'description' => t('Update/save attendee information'),
+      ),
+    );
+}
+
+
+/**
+ * Implements hook_library().
+ */
+function attendeeresource_library() {
+  $libraries['attendeeresource-services'] = array(
+    'title' => 'attendeeresource-services.js',
+    'website' => 'http://drupal.org/project/services',
+    'version' => '0.0.1',
+    'js' => array(
+      drupal_get_path('module', 'attendeeresource') . '/js/attendeeresource-services.js' => array(),
+    ),
+    'dependencies' => array(
+      array('backbone', 'drupalbackbone'),
+    ),
+  );
+  return $libraries;
+}
+
+/**
+ * Implements hook_init().
+ */
+function attendeeresource_init() {
+  drupal_add_library('attendeeresource', 'attendeeresource-services');
+}
+
+/**
+* Implements hook_services_resources().
+*/
+function attendeeresource_services_resources() {
+  $resources = array();
+
+  $resources['attendee_form'] = [
+    'retrieve' => array(
+      'help' => 'Retrieve options for a taxonomy',
+      'callback' => '_attendeeresource_attendee_form_options',
+      'access callback' => '_attendeeresource_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        array(
+          'name' => 'vocab_name',
+          'type' => 'string',
+          'description' => 'The machine name of the vocab',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+       ),
+      ),
+  ];
+
+  $resources['event_attendees'] = array(
+    'retrieve' => array(
+      'help' => 'Retreives attendees for an event',
+      'callback' => 'attendeeresource_event_attendees_retrieve',
+      'access callback' => 'attendeeresource_event_attendees_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        'event_id' => array(
+          'name' => 'event_id',
+          'type' => 'string',
+          'description' => 'The ID of the event to get attendees for.',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+      )
+    ),
+  );
+  $resources['event_attendees_available'] = array(
+    'retrieve' => array(
+      'help' => 'Retreives attendees available (not registered) for an event',
+      'callback' => 'attendeeresource_event_attendees_available_retrieve',
+      'access callback' => 'attendeeresource_event_attendees_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        'event_id' => array(
+          'name' => 'event_id',
+          'type' => 'string',
+          'description' => 'The ID of the event to retrieve unregistered attendees.',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+      )
+    ),
+  );  
+  $resources['attendee_email'] = array(
+    'retrieve' => array(
+      'help' => 'Looks up an attendee based on email',
+      'callback' => '_attendeeresource_email_lookup',
+      'access callback' => '_attendeeresource_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        'email' => array(
+          'name' => 'email',
+          'type' => 'string',
+          'description' => 'A base64 encoded email string',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+       ),
+    ),   
+  );
+  $resources['attendees_today'] = array(
+    'retrieve' => array(
+      'help' => 'Retreives attendees registered for events scheduled for today',
+      'callback' => 'attendeeresource_event_attendees_today_retrieve',
+      'access callback' => 'attendeeresource_event_attendees_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        'tok' => array(
+          'name' => 'tok',
+          'type' => 'string',
+          'description' => 'A security token configured at the start of the file',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+      ),
+    ),
+  );  
+  $resources['attendee'] = array(
+    'retrieve' => array(
+      'help' => 'Retrieves an attendee',
+      'callback' => '_attendeeresource_retrieve',
+      'access callback' => '_attendeeresource_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        array(
+          'name' => 'attendee_id',
+          'type' => 'int',
+          'description' => 'The id of the attendee to get',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+      ),
+    ),
+    'create' => array(
+      'help' => 'Creates an attendee',
+      'file' => array('file' => 'inc', 'module' => 'attendeeresource'),
+      'callback' => '_attendeeresource_service_create',
+      'access callback' => '_attendeeresource_access',
+      'access arguments' => array('create'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        array(
+          'name' => 'data',
+          'type' => 'struct',
+          'description' => 'The attendee object',
+          'source' => 'data',
+          'optional' => FALSE,
+        ),
+      ),
+    ),
+    'update' => array(
+      'help' => 'Updates an attendee',
+      'callback' => '_attendeeresource_update',
+      'access callback' => '_attendeeresource_access',
+      'access arguments' => array('update'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        array(
+          'name' => 'attendee_id',
+          'type' => 'int',
+          'description' => 'The id of the attendee to update',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+        array(
+          'name' => 'data',
+          'type' => 'array',
+          'description' => 'The attendee data object',
+          'source' => 'data',
+          'optional' => FALSE,
+        ),
+      ),
+    ),
+    'actions' => array(
+      'unregister' => array(
+        'help' => 'Unregisters an attendee from an event',
+        'callback' => '_attendeeresource_unregister',
+        'access callback' => '_attendeeresource_access',
+        'access arguments' => array('unregister'),
+        'access arguments append' => TRUE,
+        'args' => array(
+          array(
+            'name' => 'event_id',
+            'type' => 'int',
+            'description' => 'The id of the event',
+            'source' => array('path' => '1'),
+            'optional' => FALSE,
+          ),
+          array(
+            'name' => 'attendee_id',
+            'type' => 'int',
+            'description' => 'The attendee ID to unregister',
+            'source' => array('path' => '2'),
+            'optional' => FALSE,
+          ),
+         ),
+        ),
+      'register' => array(
+        'help' => 'Registers an attendee from an event',
+        'callback' => '_attendeeresource_register',
+        'access callback' => '_attendeeresource_access',
+        'access arguments' => array('register'),
+        'access arguments append' => TRUE,
+        'args' => array(
+          array(
+            'name' => 'event_id',
+            'type' => 'int',
+            'description' => 'The id of the event',
+            'source' => array('path' => '1'),
+            'optional' => FALSE,
+          ),
+          array(
+            'name' => 'attendee_id',
+            'type' => 'int',
+            'description' => 'The attendee ID to unregister',
+            'source' => array('path' => '2'),
+            'optional' => FALSE,
+          ),
+         ),
+        ),      
+        'dispatch_email' => array(
+          'help' => 'Sends registration email to attendee for event',
+          'callback' => '_attendeeresource_dispatchemail',
+          'access callback' => '_attendeeresource_access',
+          'access arguments' => array('dispatch_email'),
+          'access arguments append' => TRUE,
+          'args' => array(
+            array(
+              'name' => 'event_id',
+              'type' => 'int',
+              'description' => 'The id of the event',
+              'source' => array('path' => '1'),
+              'optional' => FALSE,
+            ),
+            array(
+              'name' => 'attendee_id',
+              'type' => 'int',
+              'description' => 'The attendee ID to unregister',
+              'source' => array('path' => '2'),
+              'optional' => FALSE,
+            ),
+          ),
+        ),
+        'change_picture' => array(
+            'help' => 'Upload a new picture for an attendee',
+            'callback' => '_attendeeresource_change_picture',
+            'access callback' => '_attendeeresource_access',
+            'access arguments' => array('change_picture'),
+            'access arguments append' => TRUE,
+            'args' => array(
+                array(
+                    'name' => 'attendee_id',
+                    'type' => 'int',
+                    'description' => 'The id of the attendee',
+                    'source' => array('path' => '1'),
+                    'optional' => FALSE,
+                ),
+                array(
+                    'name' => 'picture',
+                    'type' => 'struct',
+                    'description' => 'The picture data',
+                    'source' => 'data',
+                    'optional' => FALSE,
+                ),
+            ),
+        ),
+        'check_in' => array(
+            'help' => 'Check-in an attendee to an event',
+            'callback' => '_attendeeresource_check_in_to_event',
+            'access callback' => '_attendeeresource_access',
+            'access arguments' => array('check_in'),
+            'access arguments append' => TRUE,
+            'args' => array(
+                array(
+                    'name' => 'attendee_id',
+                    'type' => 'int',
+                    'description' => 'The id of the attendee',
+                    'source' => array('path' => '1'),
+                    'optional' => FALSE,
+                ),
+                array(
+                    'name' => 'event_id',
+                    'type' => 'int',
+                    'description' => 'The id of the event',
+                    'source' => array('path' => '2'),
+                    'optional' => FALSE,
+                ),
+            ),
+        ),   
+        'check_out' => array(
+            'help' => 'Check-out an attendee from an event',
+            'callback' => '_attendeeresource_check_out_of_event',
+            'access callback' => '_attendeeresource_access',
+            'access arguments' => array('check_out'),
+            'access arguments append' => TRUE,
+            'args' => array(
+                array(
+                    'name' => 'attendee_id',
+                    'type' => 'int',
+                    'description' => 'The id of the attendee',
+                    'source' => array('path' => '1'),
+                    'optional' => FALSE,
+                ),
+                array(
+                    'name' => 'event_id',
+                    'type' => 'int',
+                    'description' => 'The id of the event',
+                    'source' => array('path' => '2'),
+                    'optional' => FALSE,
+                ),
+            ),
+        ),   
+      ),
+    'index' => array(
+      'help' => 'Retrieves a listing of attendees',
+      'file' => array('file' => 'inc', 'module' => 'attendeeresource'),
+      'callback' => '_attendeeresource_index',
+      'access callback' => '_attendeeresource_access',
+      'access arguments' => array('index'),
+      'access arguments append' => FALSE,
+      'args' => array(
+        array(
+          'name' => 'parameters',
+          'type' => 'array',
+          'description' => '',
+          'source' => 'param',
+          'optional' => TRUE,
+          'default value' => array(),
+        ),
+      ),
+    ),
+  );
+  return $resources;
+}
+
+/**
+ * Implements hook_node_delete().
+ * @param type $node
+ */
+function attendeeresource_node_delete($node) {
+  if ($node->type == 'event_request') {
+      // remove from events, remove from tracking
+    db_delete('attendeeresource_attendees_events')->condition('event_id',$node->nid)->execute();
+    db_delete('attendeeresource_event_tracking')->condition('event_id',$node->nid)->execute();
+  }
+}
+
+
+/**
+ * Service Access
+ */
+function _attendeeresource_access($op = 'view', $args = array()) {
+  global $user;
+  $access = _eaton_backbone_is_initiator($user) || _eaton_backbone_is_coordinator($user);
+  if (!$access) {
+    // check GET for security token
+    if ((isset($_GET['tok']) && $_GET['tok'] == ATTENDEERESOURCE_SECURITY_TOKEN) || (isset($_POST['tok']) && $_POST['tok'] == ATTENDEERESOURCE_SECURITY_TOKEN)) {
+      $access = TRUE;
+    }
+  }
+  return $access;
+}
+
+function attendeeresource_event_attendees_access($op = 'view', $args = array()) {
+ return _attendeeresource_access($op,$args);
+}
+
+/**
+ * Service CRUD
+ */
+
+function _attendeeresource_index() {
+  $query = db_select('attendeeresource_attendees','a')->fields('a',array('attendee_id','first_name', 'last_name', 'email', 'picture'));
+  $result = $query->execute()->fetchAllAssoc('attendee_id');
+  return $result;
+}
+
+
+/**
+ *  Read
+ */
+// Lookup attendee based on email
+function _attendeeresource_email_lookup($base64_encoded_email) {
+  $email = base64_decode($base64_encoded_email);
+  return _attendeeresource_lookup_attendee($email);
+}
+
+// Return attendee record based on email
+function _attendeeresource_lookup_attendee($email) { 
+  $attendee_id =  db_select('attendeeresource_attendees','a')
+                ->fields('a',array('attendee_id'))
+//                ->condition('first_name',$first_name)
+//                ->condition('last_name',$last_name)
+                ->condition('email', $email)
+                ->execute()
+                ->fetchField();
+  if ($attendee_id) {
+    return _attendeeresource_get_attendee($attendee_id);
+  }
+  return FALSE;
+}
+
+// Retreive one attendee
+function _attendeeresource_retrieve($attendee_id) {
+  return _attendeeresource_get_attendee($attendee_id);
+}
+
+function attendeeresource_attendee_load($attendee_id) {
+  return _attendeeresource_get_attendee($attendee_id);
+}
+
+// Return attendee record based on ID
+function _attendeeresource_get_attendee($attendee_id) {
+  $attendee =  db_select('attendeeresource_attendees','a')
+                ->fields('a')
+                ->condition('attendee_id',$attendee_id)
+                ->execute()
+                ->fetchObject();
+  if ($attendee) {
+    $events = db_select('attendeeresource_attendees_events','b')
+              ->fields('b')
+              ->condition('attendee_id',$attendee_id)
+              ->execute()
+              ->fetchAllAssoc('attendee_event_id');
+    if ($events) {
+      $list = array();
+      foreach($events as $event) {
+        $list[$event->event_id] = $event;
+      }
+      $attendee->check_status = _attendeeresource_attendee_check_status($attendee_id, NULL);
+      $attendee->events = $list;
+    }
+
+    $picture = $attendee->picture;
+    if (!empty($picture)) {
+      $file = file_load($attendee->picture);
+      if ($file) {
+        $attendee->pictureURL = file_create_url($file->uri);
+      }
+    }
+  }
+  
+  return $attendee;
+}
+
+
+// Retreive attendees for an event
+function attendeeresource_event_attendees_retrieve($event_id) {
+  $attendees = _attendeeresource_event_attendees($event_id);
+  foreach($attendees as $attendee) {
+      $attendee->checked_in = _attendeeresource_attendee_is_checked_in_to_event($attendee->attendee_id, $event_id);
+      $attendee->check_status = _attendeeresource_attendee_check_status($attendee->attendee_id, $event_id);
+  }
+  return array_values($attendees);
+}
+
+
+// Return all attendees registered for an event
+function _attendeeresource_event_attendees($nid) {
+  $query = db_select('attendeeresource_attendees_events','b')
+            ->condition('event_id',$nid);
+  $query->leftJoin('attendeeresource_attendees','e','e.attendee_id = b.attendee_id');
+  $query->fields('b')->fields('e');
+  $attendees = $query->execute()
+            ->fetchAllAssoc('attendee_id');
+  foreach($attendees as &$attendee) {
+      $attendee->checked_in = _attendeeresource_attendee_is_checked_in_to_event($attendee->attendee_id, $nid);
+      $attendee->check_status = _attendeeresource_attendee_check_status($attendee->attendee_id, $nid);
+      $attendee->event_name = eventresource_event_title($nid);
+  }  
+//  foreach($attendees as &$attendee) {
+//    if (isset($attendee->picture) && !empty($attendee->picture)) {
+//      //$file = file_load($attendee->picture);
+//      //$attendee->picture = file_create_url($file->uri);
+//    }
+//  }
+  return $attendees;
+}
+ 
+
+// Return all events an attendee is registered for
+function _attendeeresource_attendee_events($attendee_id) {
+  $query = db_select('attendeeresource_attendees_events','b')
+            ->condition('b.attendee_id',$attendee_id)
+            ->fields('b');
+  
+  $events = $query->execute()
+            ->fetchAllAssoc('event_id');
+  return $events;
+}
+
+// Return all attendees available in the system
+function _attendeeresource_attendees() {
+   $attendees = db_select('attendeeresource_attendees','e')->fields('e')->execute()->fetchAllAssoc('attendee_id');
+   if ($attendees) {
+     foreach($attendees as $attendee_id => &$attendee) {
+       $events = _attendeeresource_attendee_events($attendee_id);
+       $attendee->events = $events;
+     }
+   }
+   return $attendees;
+}
+
+ // Retreive all attendees not registered for an event
+function attendeeresource_event_attendees_available_retrieve($nid) {
+  $event_attendees = db_select('attendeeresource_attendees_events','e')->fields('e',array('attendee_id'))->condition('event_id',$nid)->execute()->fetchCol();
+  $sql = "SELECT attendee_id FROM attendeeresource_attendees";
+  if (!empty($event_attendees)) {
+      $sql .= " WHERE attendee_id NOT IN (" . implode(',',$event_attendees) . ")";
+  }
+  $unregistered = db_query($sql)->fetchCol();
+  
+  $output = array('registered' => array(), 'unregistered' => array());
+  if (!empty($unregistered)) {
+    foreach($unregistered as $attendee_id) {
+      $output['unregistered'][$attendee_id] = _attendeeresource_get_attendee($attendee_id);
+    }
+  }
+  $registered = db_query("SELECT attendee_id FROM attendeeresource_attendees WHERE attendee_id NOT IN (" . implode(',',array_keys($output['unregistered'])) . ")")->fetchCol();
+  if (!empty($registered)) {
+    foreach($registered as $attendee_id) {
+      $output['registered'][$attendee_id] = _attendeeresource_get_attendee($attendee_id);
+    }
+  }
+  return $output;
+}
+
+
+
+// Return if attendee email exists and is registered for event
+function _attendeeresource_email_exists_event($email, $event_id) { 
+  $attendee = _attendeeresource_lookup_attendee($email);
+  if ($attendee) {
+    return _attendeeresource_attendee_id_exists_event($attendee->attendee_id, $event_id);
+  }
+  return FALSE;
+}
+
+
+ // Return if attendee ID exists and is registered for event
+function _attendeeresource_attendee_id_exists_event($attendee_id, $event_id) { 
+  $attendee = _attendeeresource_get_attendee($attendee_id);
+  if ($attendee) {
+    if (isset($attendee->events) && !empty($attendee->events) && isset($attendee->events[$event_id])) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+// Return if attendee ID is checked into event
+function _attendeeresource_attendee_is_checked_in_to_event($attendee_id,$event_id) {
+    $type = db_select('attendeeresource_event_tracking','et')
+            ->fields('et', array('type'))
+            ->condition('attendee_id',$attendee_id)
+            ->condition('event_id',$event_id)
+            ->orderBy('timestamp', 'DESC')
+            ->execute()
+            ->fetchField();
+    if ($type == 'in') {
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// Return check in count
+function _attendeeresource_attendee_check_in_count($attendee_id,$event_id) {
+    return db_select('attendeeresource_event_tracking','et')
+            ->condition('attendee_id',$attendee_id)
+            ->condition('event_id',$event_id)
+            ->condition('type','in')
+            ->countQuery()
+            ->execute()
+            ->fetchField();
+}
+
+// Return if attendee ID is checked into event
+function _attendeeresource_attendee_check_status($attendee_id,$event_id = NULL) {
+    $query = db_select('attendeeresource_event_tracking','et')
+            ->fields('et')
+            ->condition('attendee_id',$attendee_id);
+    if (!is_null($event_id)) {
+      $query->condition('event_id',$event_id);
+    }
+    $result = $query
+            ->execute()
+            ->fetchAllAssoc('tracking_id');
+    return $result;
+}
+
+
+/**
+ * Create
+ */
+
+// Create and register a new attendee
+function _attendeeresource_service_create($data) {
+  $event_id = $data['event_id'];
+  unset($data['event_id']);
+  if ($attendee = _attendeeresource_lookup_attendee($data['email'])) {
+    return array(
+      'success' => FALSE,
+      'message' => t('Attendee with email address @email already exists.',array('@email' => $data['email'])),
+      'attendee_id' => $attendee->attendee_id,
+    );
+  }
+  else {
+    $attendee_id = _attendeeresource_add_attendee((object)$data);
+    _attendeeresource_add_attendee_to_event($attendee_id, $event_id);
+//    $message = _eaton_backbone_dispatch_preregistration_email($attendee_id,$event_id);
+    return array(
+      'success' => TRUE,
+      'attendee_id' => $attendee_id,
+    );
+  }
+}
+
+// Add attendee record
+function _attendeeresource_add_attendee($attendee) {
+  if (isset($attendee->Industry)) {
+    $attendee->market_focus = $attendee->Industry;
+    unset($attendee->Industry);
+  }
+  
+  if (isset($attendee->{'Job Function'})) {
+    $attendee->visitor_type = $attendee->{'Job Function'};
+    unset($attendee->{'Job Function'});
+  }
+  else if (isset($attendee->{'Job_Function'})) {
+    $attendee->visitor_type = $attendee->{'Job_Function'};
+    unset($attendee->{'Job_Function'});
+  }  
+
+  if (isset($attendee->attendee_id)) {
+    unset($attendee->attendee_id);
+  }
+  if (isset($attendee->picture) && $attendee->picture['fid'] == 0) {
+    unset($attendee->picture);
+  }
+  else if (isset($attendee->picture) && isset($attendee->picture['fid'])) {
+    $attendee->picture = $attendee->picture['fid'];
+    
+  }
+  $now = time();
+  $attendee->created = $now;
+  if ($attendee->state == -1) {
+    $attendee->state = '';
+  }
+// sanitize
+  $attendee->first_name = RemoveBS($attendee->first_name);
+  $attendee->last_name = RemoveBS($attendee->last_name);
+  $attendee->company = RemoveBS($attendee->company);
+  $attendee->title = RemoveBS($attendee->title);
+
+  
+  $attendee_id = db_insert('attendeeresource_attendees')->fields((array)$attendee)->execute(); 
+  
+
+  if (isset($attendee->picture)) {
+    $file = file_load($attendee->picture);
+    $file->status = FILE_STATUS_PERMANENT;
+    file_save($file);
+    file_usage_add($file, 'attendeeresource', 'attendee', $attendee_id);
+  }
+  return $attendee_id;
+}
+
+// credit http://stackoverflow.com/questions/1189007/removing-strange-characters-from-php-string
+function RemoveBS($Str) {  
+  $StrArr = str_split($Str); $NewStr = '';
+  foreach ($StrArr as $Char) {    
+    $CharNo = ORD($Char);
+    if ($CharNo == 163) { $NewStr .= $Char; CONTINUE; } // keep £ 
+    if ($CharNo > 31 && $CharNo < 127) {
+      $NewStr .= $Char;    
+    }
+  }  
+  RETURN $NewStr;
+}
+
+// Add attendee to event
+function _attendeeresource_add_attendee_to_event($attendee_id, $nid) {
+  // Insert a record into Eloqua table
+  
+  db_insert('eaton_backbone_eloqua')->fields(array(
+    'event_id' => $nid,
+    'attendee_id' => $attendee_id,
+    'action' => 'registered',
+    'completed' => 0,
+    'created_at' => time()
+  ))->execute();
+
+  return db_insert('attendeeresource_attendees_events')->fields(array('attendee_id' => $attendee_id, 'event_id' => $nid, 'timestamp' => time()))->execute();
+}
+
+/**
+ * Update/Delete
+ */
+
+// Update an attendee
+function _attendeeresource_update($attendee_id, $data) {
+  // Adds backwards compatability with regression fixed in #1083242
+  $data = _services_arg_value($data, 'data');
+  
+  // Prepare edit array
+  if (isset($data['attendee'])) {
+    $edit = $data['attendee'];  
+  }
+  else {
+    $edit = $data;
+    $attendee_id = $data['attendee_id'];
+  }
+  $removePicture = FALSE;
+  if (isset($edit['picture']) && $edit['picture'] != '' && $edit['picture'] != 'valid') {
+      $picture = $edit['picture'];
+      $picture_data = explode(',',$picture);
+      $picture_data = base64_decode($picture_data[1]);
+      $pictureName = isset($edit['pictureName']) ? 'attendee_' . $attendee_id . '_picture_' . $edit['pictureName'] : 'attendee_' . $attendee_id . '_picture.jpg';
+      unset($edit['pictureName']);
+      $destination = 'public://attendee_pictures/' . $pictureName;
+      watchdog(__FUNCTION__,'changing attendee ' . $attendee_id . ' picture',NULL,WATCHDOG_INFO);
+      $file = file_save_data($picture_data, $destination, FILE_EXISTS_REPLACE);
+      if ($file) {
+          $file->status = FILE_STATUS_PERMANENT;
+          file_usage_add($file, 'attendeeresource', 'attendee', $attendee_id);
+          $edit['picture'] = $file->fid;
+      }
+  }
+  if (isset($edit['removePicture']) && !empty($edit['removePicture'])) {
+    $edit['picture'] = NULL;
+    $removePicture = TRUE;
+  }
+  $remove = array('attendee_event_id','attendee_id','id','event_name', 'event_id','wait','timestamp','events', 'old_picture', 'pictureName', 'pictureURL', 'removePicture', 'check_status', 'checked_in');
+  foreach($remove as $key) {
+    if (isset($edit[$key])) {
+      unset($edit[$key]);
+    }
+  }
+  $edit_without_picture = $edit;
+  if (isset($edit['picture']) && !empty($edit['picture'])) {
+    $edit_without_picture['picture'] = 'valid';
+  }
+  if ($removePicture) {
+    $edit_without_picture['picture'] = 'removed';
+  }
+  watchdog(__FUNCTION__, 'Update with data: <pre> ' . print_r($edit_without_picture, TRUE) . '</pre>',NULL,WATCHDOG_INFO);
+  return _attendeeresource_update_attendee($attendee_id, $edit);
+}
+
+// Update an attendee record
+function _attendeeresource_update_attendee($attendee_id, $edit) {
+   // remove checked in field
+  if (isset($edit['checked_in'])) {
+      unset($edit['checked_in']);
+  }
+  $num_updated = db_update('attendeeresource_attendees')
+                  ->fields($edit)
+                  ->condition('attendee_id',$attendee_id)
+                  ->execute();
+  if ($num_updated > 0) {
+    return _attendeeresource_get_attendee($attendee_id);
+  }
+  return FALSE;
+}
+
+
+// Delete attendee record
+function _attendeeresource_delete_attendee($attendee_id) {
+  $deleted = db_delete('attendeeresource_attendees')->condition('attendee_id',$attendee_id)->execute();
+  if ($deleted) {
+    // remove from events, remove from tracking
+    db_delete('attendeeresource_attendees_events')->condition('attendee_id',$attendee_id)->execute();
+    db_delete('attendeeresource_event_tracking')->condition('attendee_id',$attendee_id)->execute();
+    return TRUE;
+  }
+  return FALSE;
+}
+
+function _attendeeresource_delete_attendee_multiple($attendees) {
+  $deleted = 0;
+  foreach($attendees as $attendee_id) {
+    if (_attendeeresource_delete_attendee($attendee_id)) {
+      $deleted++;
+    }
+  }
+  return $deleted;
+}
+
+
+// Remove attendee from event
+function _attendeeresource_remove_attendee_from_event($attendee_id, $nid) {
+  return db_delete('attendeeresource_attendees_events')->condition('attendee_id',$attendee_id)->condition('event_id', $nid)->execute();
+}
+
+/**
+ * Update Actions
+ */
+
+// Unregister an Attendee
+function _attendeeresource_unregister($event_id, $attendee_id) {
+  $output = array(
+    'status' => 'error'
+  );
+  if (_attendeeresource_get_attendee($attendee_id)) {
+    _attendeeresource_remove_attendee_from_event($attendee_id, $event_id);
+    $output['status'] = 'success';
+    $output['message'] = 'Attendee removed from event.';
+  }
+  else {
+    $output['message'] = 'Attendee does not exist.';
+  }
+  return $output;
+}
+
+// Register an Attendee
+function _attendeeresource_register($event_id, $attendee_id) {
+  $output = array(
+    'status' => 'error',
+    'success' => FALSE,
+  );
+  if ($attendee = _attendeeresource_get_attendee($attendee_id)) {
+    if (_attendeeresource_email_exists_event($attendee->email, $event_id)) {
+      $output['message'] = 'Attendee already registered for event';
+    }
+    else {
+      _attendeeresource_add_attendee_to_event($attendee_id, $event_id);
+      if (isset($_POST['send_email']) && $_POST['send_email'] == TRUE) {
+        $message = _eaton_backbone_dispatch_preregistration_email($attendee_id,$event_id);
+      }
+      $output['status'] = 'success';
+      $output['success'] = TRUE;
+      $output['message'] = 'Attendee registered for event.'; 
+    }
+  }
+  else {
+    $output['message'] = 'Attendee does not exist.';
+  }
+  return $output;
+}
+
+// Send registration email
+function _attendeeresource_dispatchemail($event_id, $attendee_id) {
+  $output = array(
+    'status' => 'error',
+  );
+  $message = _eaton_backbone_dispatch_preregistration_email($attendee_id,$event_id);
+  if (isset($message['result']) && $message['result'] == TRUE) {
+    $output['status'] = 'success';
+  }
+  return $output;
+}
+
+
+
+function _attendeeresource_change_picture($attendee_id, $data) {
+    $output = array(
+      'success' => FALSE,
+    );
+    if (isset($data['picture']) && isset($data['pictureName'])) {
+        $picture = $data['picture'];
+        $picture_data = explode(',',$picture);
+        $picture_data = base64_decode($picture_data[1]);
+        $pictureName = $data['pictureName'];
+        $destination = 'public://attendee_pictures/' . $pictureName;
+        //watchdog('attendeeresource','changing picture to data: ' . $picture_data,NULL,WATCHDOG_INFO);
+        $file = file_save_data($picture_data, $destination, FILE_EXISTS_REPLACE);
+        if ($file) {
+            $file->status = FILE_STATUS_PERMANENT;
+            file_usage_add($file, 'attendeeresource', 'attendee', $attendee_id);
+            _attendeeresource_update_attendee($attendee_id, array('picture' => $file->fid));
+            $output['success'] = TRUE;
+            $output['fid'] = $file->fid;
+            $output['message'] = 'Success';
+        }
+        else {
+            $output['message'] = 'Couldn\'t save file data';
+        }
+    }
+    
+
+    return $output;
+}
+
+
+function _attendeeresource_check_in_to_event($attendee_id, $event_id) {
+    $output['success'] = FALSE;
+    $inserted = db_insert('attendeeresource_event_tracking')
+                ->fields(array('attendee_id' => $attendee_id, 'event_id' => $event_id, 'timestamp' => time(), 'type' => 'in'))
+                ->execute();
+    if ($inserted) {
+        // Add record to Eloqua table
+        db_insert('eaton_backbone_eloqua')
+          ->fields(array(
+              'event_id' => $event_id,
+              'attendee_id' => $attendee_id,
+              'action' => 'attended',
+              'completed' => 0,
+              'created_at' => time()
+            ))
+          ->execute();
+        $output['success'] = TRUE;
+        $output['tracking_id'] = $inserted;
+    }
+    return $output;
+}
+
+function _attendeeresource_check_out_of_event($attendee_id, $event_id) {
+    $output['success'] = FALSE;
+    $inserted = db_insert('attendeeresource_event_tracking')
+                ->fields(array('attendee_id' => $attendee_id, 'event_id' => $event_id, 'timestamp' => time(), 'type' => 'out'))
+                ->execute();
+    if ($inserted) {
+        $output['success'] = TRUE;
+        $output['tracking_id'] = $inserted;
+    }
+    return $output;
+}
+
+
+/**
+ * Generates an array of fields to be used in a csv template from a schema
+ * @param type $table_name
+ * @return array
+ */
+function _attendeeresource_generate_template_from_schema($table_name) {
+  module_load_include('install','attendeeresource','attendeeresource');
+  $schema = attendeeresource_schema();
+  $template = FALSE;
+
+  $excluded = array('attendee_id','picture','created', 'visitor_type', 'city', 'zip');
+
+  if (isset($schema[$table_name])) {
+    foreach($schema[$table_name]['fields'] as $field_name => $info) {
+      if (!in_array($field_name, $excluded)) {
+        // skip fields
+        switch($field_name) {
+          case 'market_focus':
+            $template[] = 'Industry';
+            break;
+          case 'visitor_type':
+            $template[] = 'Job Function';
+            break;
+          default:
+            $template[] = $field_name;
+        }
+      }
+    }
+  }
+
+  $sort = ['email', 'first_name', 'last_name', 'company', 'title', 'Industry', 'country', 'state'];
+
+  usort($template, function ($a, $b) use ($sort) {
+    $posA = _keyPositionInArray($a, $sort);
+    $posB = _keyPositionInArray($b, $sort);
+    if ($posA === $posB) {return 0;}
+    return $posA > $posB ? 1 : -1;
+  });
+
+  return $template;
+}
+
+
+function _keyPositionInArray($Needle, $Array) {
+  $i = 0;
+  foreach ($Array as $V) {
+    if (strcmp((string) $V, $Needle) === 0) {
+      return $i;
+    }
+    $i++;
+  }
+  return 999;
+}
+
+
+
+function attendeeresource_event_attendees_today_retrieve() {
+  $location_code = '';
+  if (isset($_GET['loc'])) {
+    $location_code = $_GET['loc'];
+  }
+  $events = eventresource_events_today(TRUE,$location_code);
+  $attendees = array();
+  if (!empty($events)) {
+    foreach($events as $event_id => $event) {
+      $event_attendees = _attendeeresource_event_attendees($event_id);
+      $attendees = array_merge($attendees, $event_attendees);
+    }
+  }
+  return $attendees;
+}
+
+function _attendeeresource_attendee_form_options($machine_name) {
+  $options = [];
+
+  if ($machine_name === 'market_focus') {
+    $options = _eaton_backbone_market_focus();
+  } else {
+    if ($vocabulary = taxonomy_vocabulary_machine_name_load($machine_name)) {
+      if ($terms = taxonomy_get_tree($vocabulary->vid)) {
+        foreach ($terms as $term) {
+          $options[$term->tid] = str_repeat('-', $term->depth) . $term->name;
+        }
+      }
+    }
+  }
+
+  return compact('options');
+}

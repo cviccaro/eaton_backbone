@@ -1,0 +1,283 @@
+<?php
+/**
+ * This module creates a resource using Services API, 
+ * 2 tables using Schema API, and various CRUD functions
+ * 
+ * Requires parent module, eaton_backbone.
+ */
+
+define('EVENTRESOURCE_SECURITY_TOKEN', 'XTCQRxH6Vka99b4WjWb7');
+
+/**
+ * Implements hook_library().
+ */
+//function attendeeresource_library() {
+//  $libraries['eventresource-services'] = array(
+//    'title' => 'eventresource-services.js',
+//    'website' => 'http://drupal.org/project/services',
+//    'version' => '0.0.1',
+////    'js' => array(
+////      drupal_get_path('module', 'eventresource') . '/js/eventresource-services.js' => array(),
+////    ),
+//    'dependencies' => array(
+//      array('backbone', 'drupalbackbone'),
+//    ),
+//  );
+//  return $libraries;
+//}
+
+/**
+ * Implements hook_init().
+ */
+//function eventresource_init() {
+//  drupal_add_library('eventresource', 'eventresource-services');
+//}
+
+/**
+* Implements hook_services_resources().
+*/
+function eventresource_services_resources() {
+  $resources = array();
+  $resources['events'] = array(
+    'retrieve' => array(
+      'help' => 'Retreives all available events',
+      'callback' => 'eventresource_retrieve',
+      'access callback' => 'eventresource_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        'filter' => array(
+          'name' => 'filter',
+          'type' => 'string',
+          'description' => 'A filter type for retrieving events.',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+      ),
+    ),
+  );
+  $resources['event'] = array(
+    'retrieve' => array(
+      'help' => 'Retreives one event',
+      'callback' => 'eventresource_retrieve_one',
+      'access callback' => 'eventresource_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        'event_id' => array(
+          'name' => 'event_id',
+          'type' => 'int',
+          'description' => 'The event ID',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+        'tok' => array(
+          'name' => 'tok',
+          'type' => 'string',
+          'description' => 'A security token configured at the start of the file',
+          'source' => array('path' => '1'),
+          'optional' => FALSE,
+        ),
+      ),
+    ),
+    'actions' => array(
+      'check-in-all' => array(
+          'help' => 'Check-in all attendees for an event',
+          'callback' => '_eventresource_check_in_all_attendees',
+          'access callback' => '_attendeeresource_access',
+          'access arguments' => array('check_in'),
+          'access arguments append' => TRUE,
+          'args' => array(
+              array(
+                  'name' => 'event_id',
+                  'type' => 'int',
+                  'description' => 'The id of the event',
+                  'source' => array('path' => '1'),
+                  'optional' => FALSE,
+              ),
+          ),
+      ) 
+    )
+  );
+    $resources['events_check'] = array(
+    'retrieve' => array(
+      'help' => 'Returns the timestamp of the most recent change to the events',
+      'callback' => 'eventresource_last_updated',
+      'access callback' => 'eventresource_access',
+      'access arguments' => array('view'),
+      'access arguments append' => TRUE,
+      'args' => array(
+        'tok' => array(
+          'name' => 'tok',
+          'type' => 'string',
+          'description' => 'A security token configured at the start of the file',
+          'source' => array('path' => '0'),
+          'optional' => FALSE,
+        ),
+      ),
+    ),
+  );  
+  return $resources;
+}
+
+function eventresource_access($op = 'view', $args = array()) {
+  $args = array_merge($args,$_GET,$_POST);
+  return isset($args['tok']) && $args['tok'] === EVENTRESOURCE_SECURITY_TOKEN;
+}
+
+function eventresource_retrieve($filter = 'all') {
+  //watchdog('eventresource_retrieve','<pre>' . print_r(func_get_args(),TRUE). '</pre>',NULL,WATCHDOG_INFO);
+  if ($filter == 'this_month') {
+    //$events = eventresource_events_this_month();
+    $events = eventresource_events_thirty_days();
+  }
+  else if ($filter == 'this_week') {
+    $events = eventresource_events_this_week();
+  }
+  else if ($filter == 'current') {
+    $events = eventresource_events_current();
+  }
+  else if ($filter == 'today') {
+    $events = eventresource_events_today();
+  }
+  else {
+      $events = _eaton_backbone_events();
+  }
+  return array_values($events);
+}
+
+
+
+function eventresource_retrieve_one($event_id, $tok) {
+  return _eaton_backbone_event($event_id);
+}
+
+
+function eventresource_events_this_week($load_entities = TRUE) {
+  $filters = array(
+    'min_date' => date('c',strtotime('midnight last Monday')),
+    'max_date' => date('c',strtotime('midnight next Monday')),
+    'request_status' => 'approved',
+  );
+  return _eaton_backbone_events($filters,$load_entities);
+}
+
+// function eventresource_events_today($load_entities = TRUE) {
+//   $filters = array(
+//     'min_date' => date('c',strtotime('midnight today')),
+//     'max_date' => date('c',strtotime('midnight tomorrow')),
+//     'request_status' => 'approved',
+//   );
+//   return _eaton_backbone_events($filters,$load_entities);
+// }
+// 
+function eventresource_events_today($load_entities = TRUE, $location_code = '') {
+    $query = new EntityFieldQuery();
+  $today_date = date('Y-m-d');
+  $today_time = strtotime($today_date . '00:00:00');
+  $today = date('Y-m-d\TH:i:s',$today_time);
+  $eod_time = strtotime($today_date . ' 23:59:59');
+  $eod = date('Y-m-d\TH:i:s',$eod_time);
+  $query->entityCondition('entity_type','node')
+        ->entityCondition('bundle','event_request')
+        ->propertyCondition('status',1)
+        ->fieldCondition('field_request_status','value','approved');
+  if ($location_code != '') {
+    $query->fieldCondition('field_event_location', 'value', $location_code);
+  }
+
+  $result = $query->execute();
+  $nodes = array();
+  if (!empty($result)) {
+    foreach($result['node'] as $nid => $node_info) {
+      $node = node_load($nid);
+      $wrapper = entity_metadata_wrapper('node', $node);
+      $approved_date = $wrapper->field_approved_date->value();
+      $start_time = strtotime($approved_date['value']);
+      $end_time =  strtotime($approved_date['value2']);
+      if ($start_time >= $today_time && $start_time <= $eod_time) {
+          $nodes[$node->nid] = $node;
+      }
+      else if ($start_time <= $today_time && $end_time >= $today_time) {
+          $nodes[$node->nid] = $node;
+      }
+    }
+  }
+  return $nodes;
+}
+
+function eventresource_events_this_month($load_entities = TRUE) {
+  $filters = array(
+    'min_date' => date('c',strtotime('first day of this month')),
+    'max_date' => date('c',strtotime('last day of this month')),
+    'request_status' => 'approved',
+  );  
+  return _eaton_backbone_events($filters,$load_entities);
+}
+
+function eventresource_events_thirty_days($load_entities = TRUE) {
+  $today_midnight = strtotime('today midnight');
+  $filters = array(
+    'min_end_date' => date('c', $today_midnight),
+    'max_end_date' => date('c',$today_midnight + (30 * 24 * 60 * 60)),
+    'request_status' => 'approved',
+  );  
+  return _eaton_backbone_events($filters,$load_entities);
+}
+
+function eventresource_events_current($load_entities = TRUE) {
+ $filters = array(
+    'min_date' => date('c',strtotime('midnight last Monday')),
+    'max_date' => NULL,
+    'request_status' => 'approved',
+  );    
+  return _eaton_backbone_events($filters,$load_entities);
+}
+
+function eventresource_last_updated() {
+  $q = db_select('node','n')->condition('type','event_request');
+  $q->addExpression('MAX(changed)');
+  $result = $q->execute()->fetchField();
+//  $events = eventresource_events_current(FALSE);
+  $events = eventresource_events_this_month(FALSE);
+  $count = count($events);
+  return array('updated' => $result, 'count' => $count);
+}
+
+function eventresource_event_title($event_id) {
+  return db_select('node', 'n')->fields('n', array('title'))->condition('nid', $event_id)->execute()->fetchField();
+}
+
+/**
+ * Update Actions
+ */
+
+// Check in all attendees
+function _eventresource_check_in_all_attendees($event_id) {
+  $attendees = _attendeeresource_event_attendees($event_id);
+
+  foreach($attendees as $attendee) {
+   _attendeeresource_check_in_to_event($attendee->attendee_id, $event_id);
+  }
+
+  $output = [
+    'success' => TRUE,
+    'count' => count($attendees)
+  ];
+  return $output;
+}
+
+// Check out all attendees
+function _eventresource_check_out_all_attendees($event_id) {
+  $attendees = _attendeeresource_event_attendees($event_id);
+
+  foreach($attendees as $attendee) {
+   _attendeeresource_check_out_of_event($attendee->attendee_id, $event_id);
+  }
+
+  $output = [
+    'success' => TRUE,
+    'count' => count($attendees)
+  ];
+  return $output;
+}

@@ -1,0 +1,40 @@
+//
+
+@import "compass/support";  // Add Compass' IE and vendor prefix support variables.
+@import "compass/utilities/general/clearfix"; // Better than Drupal's clearfix.
+@import "compass/utilities/sprites"; // See http://compass-style.org/help/tutorials/spriting/
+@import "compass/css3";     // Use one CSS3 mixin instead of multiple vendor prefixes.
+
+.eaton-app {
+    padding:20px;
+    nav {
+       padding:25px 0px;
+    }
+    .eaton-app-header {
+        @include clearfix;
+        overflow:visible;
+        margin:15px 0px;
+        .app-info {
+            float:left;
+        }
+        .app-config {
+            float:right;
+            label {
+                float:left;
+            }
+            input,select { float:left; }
+            .eaton-app-items-per-page {
+                width:65px;
+            }
+        }
+        .app-actions {
+            float:left;
+            clear:both;
+        }
+    }
+    .eaton-app-pager {
+        a {
+            margin-right:15px;
+        }
+    }
+}

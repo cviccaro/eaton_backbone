@@ -1,0 +1,19 @@
+name = Eaton Backbone
+description = This is the backbone of the site, incidentally using a lot of Backbone.js.
+dependencies[] = backbone
+dependencies[] = backbone_services
+dependencies[] = mailsystem
+dependencies[] = attendeeresource
+dependencies[] = eaton_taxonomies
+dependencies[] = phpexcel
+
+core = 7.x
+version = "7.x-1.x-dev"
+datestamp = "1394032315"
+
+stylesheets[all][] = css/eaton_backbone.css
+
+files[] = inc/cipher.inc
+files[] = inc/EatonMailSystem.inc
+files[] = eaton_backbone.theme.inc
+files[] = eaton_backbone.pages.inc

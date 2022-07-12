@@ -1,0 +1,245 @@
+<?php
+
+function attendeeresource_schema() {
+  $schema['attendeeresource_attendees'] = array(
+    'description' => 'table holding all attendee records',
+    'fields' => array(
+      'attendee_id' => array(
+        'description' => 'primary id',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'first_name' => array(
+        'type' => 'varchar',
+        'description' => 'first name of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'last_name' => array(
+        'type' => 'varchar',
+        'description' => 'last name of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),      
+      'company' => array(
+        'type' => 'varchar',
+        'description' => 'company name of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'title' => array(
+        'type' => 'varchar',
+        'description' => 'title of attendee at company',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'visitor_type' => array(
+        'type' => 'varchar',
+        'description' => 'visitor type from set of dropdown options',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'market_focus' => array(
+        'type' => 'varchar',
+        'description' => 'market focus from set of dropdown options',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),           
+      'email' => array(
+        'type' => 'varchar',
+        'description' => 'email address of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'city' => array(
+        'type' => 'varchar',
+        'description' => 'city name of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'country' => array(
+        'type' => 'varchar',
+        'description' => 'country ISO code of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),
+      'state' => array(
+        'type' => 'varchar',
+        'description' => 'state ISO code of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ),  
+      'zip' => array(
+        'type' => 'varchar',
+        'description' => 'zip/postal code of attendee',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ), 
+      'picture' => array(
+        'type' => 'int',
+        'length' => 10,
+        'unsigned' => TRUE,
+        'description' => 'File ID.',
+      ),
+      'created' => array(
+        'type' => 'int',
+        'length' => 11,
+        'unsigned' => TRUE,
+        'description' => 'record creation timestamp',
+      ),
+    ),
+    'primary key' => array('attendee_id'),
+    'foreign keys' => array(
+      'file_managed' => array(
+        'table' => 'file_managed',
+        'columns' => array('picture' => 'fid'),
+      ),
+    ),
+  );
+  $schema['attendeeresource_attendees_events'] = array(
+    'description' => 'stores attendee records -> events with date',
+    'fields' => array(
+      'attendee_event_id' => array(
+        'description' => 'primary id',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'attendee_id' => array(
+        'description' => 'primary id of attendee',
+        'type' => 'int',
+        'length' => 10,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'event_id' => array(
+        'description' => 'node id',
+        'type' => 'int',
+        'length' => 10,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'timestamp' => array(
+        'description' => 'time record created',
+        'type' => 'int',
+        'length' => 11,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+    ),
+    'indexes' => array(
+      'attendee_id' => array('attendee_id'),
+      'event_id' => array('event_id'),
+    ),
+    'unique keys' => array(
+      'attendee_event' => array('attendee_id', 'event_id'),
+    ),
+    'foreign keys' => array(
+      'eaton_backbone_attendees' => array(
+        'table' => 'eaton_backbone_attendees',
+        'columns' => array('attendee_id' => 'attendee_id'),
+      ),
+      'node' => array(
+        'table' => 'node',
+        'columns' => array('event_id' => 'nid')
+      ),
+    ),
+    'primary key' => array('attendee_event_id'),
+  );
+ $schema['attendeeresource_event_tracking'] = array(
+    'description' => 'tracks attendee => event_id activity',
+    'fields' => array(
+      'tracking_id' => array(
+        'description' => 'primary id',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'attendee_id' => array(
+        'description' => 'primary id of attendee',
+        'type' => 'int',
+        'length' => 10,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'event_id' => array(
+        'description' => 'node id',
+        'type' => 'int',
+        'length' => 10,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+      'type' => array(
+        'description' => 'type of tracking being done (in or out)',
+        'type' => 'varchar',
+        'length' => 16,
+        'not null' => TRUE,
+      ),
+      'timestamp' => array(
+        'description' => 'time record created',
+        'type' => 'int',
+        'length' => 11,
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ),
+    ),
+    'indexes' => array(
+      'attendee_id' => array('attendee_id'),
+      'event_id' => array('event_id'),
+    ),
+    'foreign keys' => array(
+      'attendeeresource_attendees' => array(
+        'table' => 'attendeeresource_attendees',
+        'columns' => array('attendee_id' => 'attendee_id'),
+      ),
+      'node' => array(
+        'table' => 'node',
+        'columns' => array('event_id' => 'nid')
+      ),
+    ),
+    'primary key' => array('tracking_id'),
+  );  
+  return $schema;
+}
+//
+//function eaton_backbone_enable() {
+//   mailsystem_set(array('eaton_backbone' => 'EatonMailSystem'));
+//}
+//
+//function eaton_backbone_disable() {
+//   mailsystem_clear(array('eaton_backbone' => 'EatonMailSystem'));
+//}
+
+/**
+ *  Add visitor type and market focus columns to attendeeresource_attendees table
+ */
+function attendeeresource_update_7000() {
+  $field = array(
+    'type' => 'varchar',
+    'description' => 'visitor type from set of dropdown options',
+    'length' => 255,
+    'not null' => TRUE,
+    'default' => '',
+  );
+  db_add_field('attendeeresource_attendees', 'visitor_type', $field);
+  $field = array(
+    'type' => 'varchar',
+    'description' => 'market focus from set of dropdown options',
+    'length' => 255,
+    'not null' => TRUE,
+    'default' => '',
+  );
+  db_add_field('attendeeresource_attendees', 'market_focus', $field);
+}

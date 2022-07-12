@@ -1,0 +1,8 @@
+name = Event Resource
+description = Implements Service API Resource to manage Event data
+dependencies[] = services
+dependencies[] = eaton_backbone
+version = "7.x-1.x-dev"
+core = 7.x
+project = "services"
+package = "Services - services"

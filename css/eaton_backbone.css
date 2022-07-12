@@ -1,0 +1,44 @@
+/* line 8, ../sass/eaton_backbone.scss */
+.eaton-app {
+  padding: 20px;
+}
+/* line 10, ../sass/eaton_backbone.scss */
+.eaton-app nav {
+  padding: 25px 0px;
+}
+/* line 13, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-header {
+  overflow: hidden;
+  *zoom: 1;
+  overflow: visible;
+  margin: 15px 0px;
+}
+/* line 17, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-header .app-info {
+  float: left;
+}
+/* line 20, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-header .app-config {
+  float: right;
+}
+/* line 22, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-header .app-config label {
+  float: left;
+}
+/* line 25, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-header .app-config input, .eaton-app .eaton-app-header .app-config select {
+  float: left;
+}
+/* line 26, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-header .app-config .eaton-app-items-per-page {
+  width: 65px;
+}
+/* line 30, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-header .app-actions {
+  float: left;
+  clear: both;
+}
+/* line 36, ../sass/eaton_backbone.scss */
+.eaton-app .eaton-app-pager a {
+  margin-right: 15px;
+}

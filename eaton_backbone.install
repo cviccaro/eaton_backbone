@@ -1,0 +1,328 @@
+<?php
+function eaton_backbone_enable()
+{
+    mailsystem_set(array('eaton_backbone' => 'EatonMailSystem'));
+}
+
+function eaton_backbone_disable()
+{
+    mailsystem_clear(array('eaton_backbone' => 'EatonMailSystem'));
+}
+
+function eaton_backbone_schema()
+{
+    $schema = array();
+    $schema['eaton_backbone_accepted_suggestions'] = array(
+        'description' => 'Stores a listing of denied events that have suggested dates accepted by the node author',
+        'fields' =>  array(
+            'event_id' => array(
+                'type' => 'int',
+                'not null' => true,
+                'unsigned' => true,
+                'length' => 32,
+                'description' => 'The node ID of the event request'
+            ),
+            'date' => array(
+                'description' => 'the suggested date that was selected (serialized field data)',
+                'type' => 'blob',
+                'size' => 'normal',
+                'not null' => true,
+            ),
+            'timestamp' => array(
+                'type' => 'int',
+                'length' => 11,
+                'unsigned' => true,
+                'description' => 'record creation timestamp',
+            ),
+        ),
+    );
+    $schema['eaton_backbone_eaton_locations'] = array(
+        'description' => 'Stores information about Eaton Locations, used to populate event_location field',
+        'fields' => array(
+            'location_id' => array(
+                'description' => 'Internal ID for location',
+                'type' => 'serial',
+                'unsigned' => true,
+                'not null' => true,
+            ),
+            'location_code' => array(
+                'description' => 'Location Code',
+                'type' => 'varchar',
+                'length' => 3,
+                'not null' => true,
+                'default' => '',
+            ),
+            'location_name' => array(
+                'description' => 'Location Name',
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => true,
+                'default' => '',
+            ),
+            'location_contact' => array(
+                'description' => 'Location Contact Name',
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => true,
+                'default' => '',
+            ),
+            'location_contact_title' => array(
+                'description' => 'Location Contact Title',
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => true,
+                'default' => '',
+            ),
+            'location_email' => array(
+                'description' => 'Location Email',
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => true,
+                'default' => '',
+            ),
+            'location_phone' => array(
+                'description' => 'Location Phone',
+                'type' => 'varchar',
+                'length' => 255,
+                'not null' => true,
+                'default' => '',
+            ),
+            'location_available_for_events' => array(
+                'description' => 'Boolean indicating whether the location is available for events, or just in the contact form.',
+                'type' => 'int',
+                'not null' => true,
+                'default' => 0,
+            ),
+            'created' => array(
+              'description' => 'The Unix timestamp when the node was created.',
+              'type' => 'int',
+              'not null' => true,
+              'default' => 0,
+            ),
+            'changed' => array(
+              'description' => 'The Unix timestamp when the node was most recently saved.',
+              'type' => 'int',
+              'not null' => true,
+              'default' => 0,
+            ),
+            'badge_front' => array(
+                'description' => 'File ID of front image.',
+                'type' => 'int',
+                'not null'=> false,
+            ),
+            'badge_back' => array(
+                'description' => 'File ID of image associated with this record.',
+                'type' => 'int',
+                'not null' => false,
+            ),
+            'qr_size' => array(
+                'description' => 'Size of QR code',
+                'type' => 'varchar',
+                'length' => 16,
+                'not null' => true,
+                'default' => 'normal',
+            ),
+            'timezone' => array(
+                'description' => 'Timezone Identifier',
+                'type' => 'varchar',
+                'length' => 256,
+                'not null' => true,
+                'default' => 'UTC',
+            ),
+            'room_requirements' => array(
+                'type' => 'blob',
+                'description' => 'serialized array of room requirements',
+                'size' => 'normal',
+                'not null' => false,
+            ),
+            'visit_purposes' => array(
+                'type' => 'blob',
+                'description' => 'serialized array of available visit purposes',
+                'size' => 'normal',
+                'not null' => false,
+            ),
+            'address' => array(
+                'description' => 'Street address',
+                'type' => 'varchar',
+                'length' => 256,
+                'not null' => false
+            ),
+            'city' => array(
+                'description' => 'City',
+                'type' => 'varchar',
+                'length' => 256,
+                'not null' => false
+            ),
+            'state' => array(
+                'description' => 'State',
+                'type' => 'varchar',
+                'length' => 256,
+                'not null' => false
+            ),
+            'postal' => array(
+                'description' => 'Postal Code',
+                'type' => 'varchar',
+                'length' => 256,
+                'not null' => false
+            ),
+            'country' => array(
+                'description' => 'Country',
+                'type' => 'varchar',
+                'length' => 256,
+                'not null' => false
+            ),
+        ),
+        'primary key' => array('location_id'),
+    );
+    $schema['eaton_backbone_eloqua'] = array(
+        'description' => 'Stores records of the relation between attendees, events, and eloqua',
+        'fields' =>  array(
+            'id' => array(
+                'description' => 'Internal ID for location',
+                'type' => 'serial',
+                'unsigned' => true,
+                'not null' => true,
+            ),
+            'event_id' => array(
+                'type' => 'int',
+                'not null' => true,
+                'unsigned' => true,
+                'length' => 32,
+                'description' => 'The node ID of the event request'
+            ),
+            'attendee_id' => array(
+                'description' => 'The attendee ID',
+                'type' => 'int',
+                'not null' => true,
+                'unsigned' => true,
+                'length' => 32
+            ),
+            'action' => array(
+                'description' => 'What action is intended to be run on this item.',
+                'type' => 'varchar',
+                'length' => 32,
+                'not null' => true,
+                'default' => ''
+            ),
+            'completed' => array(
+                'description' => 'Whether or not this action has been completed.',
+                'type' => 'int',
+                'not null' => true,
+                'default' => 0
+            ),
+            'created_at' => array(
+                'type' => 'int',
+                'length' => 11,
+                'unsigned' => true,
+                'description' => 'record creation timestamp',
+            ),
+            'updated_at' => array(
+                'type' => 'int',
+                'length' => 11,
+                'unsigned' => true,
+                'description' => 'record creation timestamp',
+            ),
+        ),
+        'indexes' => array(
+            'eloqua_event_id' => array('event_id'),
+            'eloqua_attendee_id' => array('attendee_id'),
+            'eloqua_completed' => array('completed'),
+            'eloqua_created_at' => array('created_at'),
+            'eloqua_updated_at' => array('updated_at'),
+        ),
+        'primary key' => array('id')
+    );
+    return $schema;
+}
+
+/**
+ * Add location_available_for_events column to eaton_backbone_eaton_locations table
+ */
+function eaton_backbone_update_7100(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    $location_column = $schema['eaton_backbone_eaton_locations']['fields']['location_available_for_events'];
+    db_add_field('eaton_backbone_eaton_locations', 'location_available_for_events', $location_column);
+}
+
+/**
+ * Add created and changed column to eaton_backbone_eaton_locations table
+ */
+function eaton_backbone_update_7101(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    foreach (array('changed', 'created') as $column_name) {
+        $column = $schema['eaton_backbone_eaton_locations']['fields'][$column_name];
+        db_add_field('eaton_backbone_eaton_locations', $column_name, $column);
+    }
+}
+
+/**
+ * Add badge_back column for fid
+ */
+function eaton_backbone_update_7102(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    foreach (array('badge_back') as $column_name) {
+        $column = $schema['eaton_backbone_eaton_locations']['fields'][$column_name];
+        db_add_field('eaton_backbone_eaton_locations', $column_name, $column);
+    }
+}
+
+
+/**
+ * Add timezone column to locations
+ */
+function eaton_backbone_update_7103(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    $column_name = 'timezone';
+    $column = $schema['eaton_backbone_eaton_locations']['fields'][$column_name];
+    db_add_field('eaton_backbone_eaton_locations', $column_name, $column);
+}
+
+
+/**
+ * Add room_requirements column to locations
+ */
+function eaton_backbone_update_7104(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    $column_name = 'room_requirements';
+    $column = $schema['eaton_backbone_eaton_locations']['fields'][$column_name];
+    db_add_field('eaton_backbone_eaton_locations', $column_name, $column);
+}
+
+/**
+ * Add visit_purposes column to locations
+ */
+function eaton_backbone_update_7105(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    $column_name = 'visit_purposes';
+    $column = $schema['eaton_backbone_eaton_locations']['fields'][$column_name];
+    db_add_field('eaton_backbone_eaton_locations', $column_name, $column);
+}
+
+/**
+ * Adds Eloqua table
+ */
+function eaton_backbone_update_7106(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    $table = $schema['eaton_backbone_eloqua'];
+    db_create_table('eaton_backbone_eloqua', $table);
+}
+
+/**
+ * Adds Address fields to Location
+ */
+function eaton_backbone_update_7107(&$sandbox)
+{
+    $schema = eaton_backbone_schema();
+    $to_add = array('address', 'city', 'state', 'postal', 'country');
+    foreach ($to_add as $column_name) {
+        $column = $schema['eaton_backbone_eaton_locations']['fields'][$column_name];
+        db_add_field('eaton_backbone_eaton_locations', $column_name, $column);
+    }
+}
